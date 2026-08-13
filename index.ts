@@ -55,7 +55,7 @@ function categoryTitle(category: ProductCategory) {
 }
 async function showCategory(ctx: Context, category: ProductCategory) {
   await safeAnswer(ctx);
-  const rows = productsBy(category).map((product) => [Markup.button.callback(`${product.emoji} ${product.title} — ${money(product.price)}`, `product:${product.id}`)]);
+  const rows = productsBy(category).map((product) => [Markup.button.callback(`${product.emoji} ${product.title} · ${money(product.oldPrice)} → ${money(product.price)} 🔥`, `product:${product.id}`)]);
   rows.push([Markup.button.callback("← К категориям", "shop")]);
   return ctx.editMessageText(`<b>${categoryTitle(category)}</b>\n<i>🔥 Все цены уже со скидкой 40%</i>\n\nНажми на товар, чтобы посмотреть состав и купить прямо в Telegram.`, { parse_mode: "HTML", ...Markup.inlineKeyboard(rows) });
 }
