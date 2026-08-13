@@ -1,7 +1,8 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import { Telegraf, Markup, type Context } from "telegraf";
+import { join } from "node:path";
+import { Telegraf, Markup, Input, type Context } from "telegraf";
 import { productById, productsBy, type Product, type ProductCategory } from "./catalog.js";
 import { markOrderPaid, saveOrder, saveTicket, type Order, type TicketKind } from "./store.js";
 
@@ -16,14 +17,16 @@ const links = {
 };
 const staffChatId = Number(process.env.STAFF_CHAT_ID || 0) || undefined;
 const providerToken = process.env.PAYMENT_PROVIDER_TOKEN;
+const asset = (name: string) => join(process.cwd(), "assets", name);
 type Purchase = Pick<Product, "id" | "category" | "title" | "price" | "emoji" | "description" | "perks"> & { auraAmount?: number };
 type Pending = { type: "ticket"; kind: TicketKind } | { type: "nick"; purchase: Purchase } | { type: "auraAmount" };
 const pending = new Map<number, Pending>();
 
 const mainKeyboard = () => Markup.inlineKeyboard([
   [Markup.button.callback("🛒 Магазин Aura", "shop"), Markup.button.callback("🧭 Обращения", "help")],
+  [Markup.button.callback("🎮 О сервере", "server"), Markup.button.callback("📜 Правила", "rules")],
   [Markup.button.callback("📋 Заявки в команду", "applications"), Markup.button.url("💬 Discord", links.discord)],
-  [Markup.button.url("🌐 Сайт", links.site), Markup.button.url("📢 Новости", links.telegram)]
+  [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Канал создателя", "https://t.me/next_auramc")]
 ]);
 const backKeyboard = () => Markup.inlineKeyboard([[Markup.button.callback("← В главное меню", "home")]]);
 const safeAnswer = (ctx: Context, text?: string) => ctx.answerCbQuery(text).catch(() => undefined);
@@ -31,10 +34,9 @@ const displayName = (ctx: Context) => [ctx.from?.first_name, ctx.from?.last_name
 const userData = (ctx: Context) => ({ id: ctx.from!.id, username: ctx.from?.username, name: displayName(ctx) });
 const money = (value: number) => new Intl.NumberFormat("ru-RU").format(value) + " ₽";
 
-async function showHome(ctx: Context, edit = false) {
-  const text = "<b>🔴 AURA</b>\n<i>Твой путь на сервере начинается здесь.</i>\n\nВыбирай раздел — магазин, обращения или заявки в команду.";
-  if (edit && ctx.callbackQuery) return ctx.editMessageText(text, { parse_mode: "HTML", ...mainKeyboard() });
-  return ctx.reply(text, { parse_mode: "HTML", ...mainKeyboard() });
+async function showHome(ctx: Context) {
+  const text = "<b>🔴 AURA — ГРИФЕРСКИЙ СЕРВЕР</b>\n<i>🔥 Играй, сражайся, забирай своё.</i>\n\n🎮 <b>Для телефонов и компьютеров</b>\nВерсия: <b>1.16.5 — новые версии</b>\nРежим: <b>гриф-выживание</b>\n\n📢 Канал сервера: @aura_grief\n💬 В Discord — заявки, новости и общение\n👤 Канал создателя: @next_auramc\n\n<i>Выбирай раздел ниже — всё нужное в одном боте.</i>";
+  return ctx.replyWithPhoto(Input.fromLocalFile(asset("aura-home.png")), { caption: text, parse_mode: "HTML", ...mainKeyboard() });
 }
 
 async function showShop(ctx: Context) {
@@ -62,7 +64,7 @@ async function showCategory(ctx: Context, category: ProductCategory) {
 async function showProduct(ctx: Context, product: Product) {
   await safeAnswer(ctx);
   const perks = product.perks.map((perk) => `• ${perk}`).join("\n");
-  return ctx.editMessageText(`<b>${product.emoji} ${product.title}</b>\n${product.description}\n\n${perks}\n\n<s>${money(product.oldPrice)}</s> → <b>${money(product.price)}</b> <i>🔥 −40%</i>`, {
+  return ctx.replyWithPhoto(Input.fromLocalFile(asset(product.image)), { caption: `<b>${product.emoji} ${product.title}</b>\n${product.description}\n\n${perks}\n\n<s>${money(product.oldPrice)}</s> → <b>${money(product.price)}</b> <i>🔥 −40%</i>`,
     parse_mode: "HTML",
     ...Markup.inlineKeyboard([
       [Markup.button.callback("💳 Купить в Telegram", `buy:${product.id}`)],
@@ -88,9 +90,17 @@ async function sendStaff(text: string) {
 
 bot.start((ctx) => showHome(ctx));
 bot.command("menu", (ctx) => showHome(ctx));
-bot.action("home", async (ctx) => { pending.delete(ctx.from.id); await safeAnswer(ctx); await showHome(ctx, true); });
+bot.action("home", async (ctx) => { pending.delete(ctx.from.id); await safeAnswer(ctx); await showHome(ctx); });
 bot.action("shop", showShop);
 bot.action("help", showHelp);
+bot.action("server", async (ctx) => {
+  await safeAnswer(ctx);
+  await ctx.editMessageText("<b>🎮 Об Aura</b>\n\n🔴 Aura — гриф-выживание для компьютеров и телефонов.\n🧩 Поддерживаемые версии: <b>1.16.5 и новые</b>.\n\n📢 Новости сервера: @aura_grief\n👤 Создатель: @next_auramc\n💬 В Discord находятся общение, поддержка и заявки в команду.", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("💬 Открыть Discord", links.discord)], [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Создатель", "https://t.me/next_auramc")], [Markup.button.callback("← В меню", "home")]]) });
+});
+bot.action("rules", async (ctx) => {
+  await safeAnswer(ctx);
+  await ctx.editMessageText("<b>📜 Правила Aura</b>\n\n• Уважай игроков: без оскорблений, флуда, капса и рекламы.\n• Читы, X-Ray, Baritone, боты и обход наказаний запрещены.\n• Нельзя использовать баги, дюпы, торговать предметами за реальные деньги или отправлять ложные жалобы.\n• Нельзя передавать аккаунты и привилегии.\n• Правила одинаковы для всех, включая игроков с донатом.\n\n<i>Полная актуальная редакция находится на сайте.</i>", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("📖 Открыть полные правила", `${links.site}/rules.html`)], [Markup.button.callback("← В меню", "home")]]) });
+});
 bot.action("applications", async (ctx) => {
   await safeAnswer(ctx);
   await ctx.editMessageText("<b>📋 Заявки в команду Aura</b>\n\nЗаявки не заполняются в боте. Перейди на Discord-сервер Aura и выбери нужную форму:\n\n• Helper\n• Медиа-команда — YouTube или TikTok\n• Другие открытые роли\n\nТам же можно следить за статусом заявки.", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("Открыть Discord Aura", links.discord)], [Markup.button.callback("← В меню", "home")]]) });
