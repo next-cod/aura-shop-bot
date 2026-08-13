@@ -35,7 +35,7 @@ const userData = (ctx: Context) => ({ id: ctx.from!.id, username: ctx.from?.user
 const money = (value: number) => new Intl.NumberFormat("ru-RU").format(value) + " ₽";
 
 async function showHome(ctx: Context) {
-  const text = "<b>🔴 AURA — ГРИФЕРСКИЙ СЕРВЕР</b>\n<i>🔥 Играй, сражайся, забирай своё.</i>\n\n🎮 <b>Для телефонов и компьютеров</b>\nВерсия: <b>1.16.5 — новые версии</b>\nРежим: <b>гриф-выживание</b>\n\n📢 Канал сервера: @aura_grief\n💬 В Discord — заявки, новости и общение\n👤 Канал создателя: @next_auramc\n\n<i>Выбирай раздел ниже — всё нужное в одном боте.</i>";
+  const text = "<b>🔴 AURA — ГРИФЕРСКИЙ СЕРВЕР</b>\n<i>🔥 Играй, сражайся, забирай своё.</i>\n\n🎮 <b>Для телефонов и компьютеров</b>\nВерсии: <b>1.16.5–26.2</b>\nРежим: <b>гриф-выживание</b>\n\n📢 Канал сервера: @aura_grief\n💬 Discord сервер: <a href=\"https://discord.gg/JP6jSt7DA\">discord.gg/JP6jSt7DA</a>\n👤 Канал создателя: @next_auramc\n\n<i>Выбирай раздел ниже — всё нужное в одном боте.</i>";
   return ctx.replyWithPhoto(Input.fromLocalFile(asset("aura-home.png")), { caption: text, parse_mode: "HTML", ...mainKeyboard() });
 }
 
