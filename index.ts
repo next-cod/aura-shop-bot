@@ -16,7 +16,8 @@ const links = {
 };
 const staffChatId = Number(process.env.STAFF_CHAT_ID || 0) || undefined;
 const providerToken = process.env.PAYMENT_PROVIDER_TOKEN;
-type Pending = { type: "ticket"; kind: TicketKind } | { type: "nick"; productId: string };
+type Purchase = Pick<Product, "id" | "category" | "title" | "price" | "emoji" | "description" | "perks"> & { auraAmount?: number };
+type Pending = { type: "ticket"; kind: TicketKind } | { type: "nick"; purchase: Purchase } | { type: "auraAmount" };
 const pending = new Map<number, Pending>();
 
 const mainKeyboard = () => Markup.inlineKeyboard([
@@ -38,34 +39,33 @@ async function showHome(ctx: Context, edit = false) {
 
 async function showShop(ctx: Context) {
   await safeAnswer(ctx);
-  return ctx.editMessageText("<b>🛒 Магазин Aura</b>\n\nВыбери, что хочешь приобрести. Перед оплатой бот попросит игровой ник — на него придёт покупка.", {
+  return ctx.editMessageText("<b>🛒 Магазин Aura</b>\n<i>🔥 Скидка 40% на все позиции</i>\n\nВыбери товар. Перед оплатой бот попросит игровой ник — покупка будет выдана на него.", {
     parse_mode: "HTML",
     ...Markup.inlineKeyboard([
       [Markup.button.callback("👑 Привилегии", "category:privilege")],
-      [Markup.button.callback("🔴 Аура", "category:aura"), Markup.button.callback("🎁 Кейсы", "category:case")],
-      [Markup.button.url("🌐 Открыть магазин на сайте", links.site)],
+      [Markup.button.callback("🔴 Купить Ауру", "aura:custom"), Markup.button.callback("🎁 Кейсы", "category:case")],
+      [Markup.button.callback("🔓 Услуги", "category:service")],
       [Markup.button.callback("← В меню", "home")]
     ])
   });
 }
 
 function categoryTitle(category: ProductCategory) {
-  return ({ privilege: "👑 Привилегии", aura: "🔴 Аура", case: "🎁 Кейсы" })[category];
+  return ({ privilege: "👑 Привилегии", case: "🎁 Кейсы", service: "🔓 Услуги" })[category];
 }
 async function showCategory(ctx: Context, category: ProductCategory) {
   await safeAnswer(ctx);
   const rows = productsBy(category).map((product) => [Markup.button.callback(`${product.emoji} ${product.title} — ${money(product.price)}`, `product:${product.id}`)]);
   rows.push([Markup.button.callback("← К категориям", "shop")]);
-  return ctx.editMessageText(`<b>${categoryTitle(category)}</b>\n\nАктуальные позиции Aura. Нажми на товар, чтобы посмотреть состав и купить.`, { parse_mode: "HTML", ...Markup.inlineKeyboard(rows) });
+  return ctx.editMessageText(`<b>${categoryTitle(category)}</b>\n<i>🔥 Все цены уже со скидкой 40%</i>\n\nНажми на товар, чтобы посмотреть состав и купить прямо в Telegram.`, { parse_mode: "HTML", ...Markup.inlineKeyboard(rows) });
 }
 async function showProduct(ctx: Context, product: Product) {
   await safeAnswer(ctx);
   const perks = product.perks.map((perk) => `• ${perk}`).join("\n");
-  return ctx.editMessageText(`<b>${product.emoji} ${product.title}</b>\n${product.description}\n\n${perks}\n\n<b>Стоимость: ${money(product.price)}</b>`, {
+  return ctx.editMessageText(`<b>${product.emoji} ${product.title}</b>\n${product.description}\n\n${perks}\n\n<s>${money(product.oldPrice)}</s> → <b>${money(product.price)}</b> <i>🔥 −40%</i>`, {
     parse_mode: "HTML",
     ...Markup.inlineKeyboard([
       [Markup.button.callback("💳 Купить в Telegram", `buy:${product.id}`)],
-      [Markup.button.url("🌐 Купить на сайте", links.site)],
       [Markup.button.callback("← К списку", `category:${product.category}`)]
     ])
   });
@@ -95,8 +95,13 @@ bot.action("applications", async (ctx) => {
   await safeAnswer(ctx);
   await ctx.editMessageText("<b>📋 Заявки в команду Aura</b>\n\nЗаявки не заполняются в боте. Перейди на Discord-сервер Aura и выбери нужную форму:\n\n• Helper\n• Медиа-команда — YouTube или TikTok\n• Другие открытые роли\n\nТам же можно следить за статусом заявки.", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("Открыть Discord Aura", links.discord)], [Markup.button.callback("← В меню", "home")]]) });
 });
-bot.action(/^category:(privilege|aura|case)$/, (ctx) => showCategory(ctx, ctx.match[1] as ProductCategory));
+bot.action(/^category:(privilege|case|service)$/, (ctx) => showCategory(ctx, ctx.match[1] as ProductCategory));
 bot.action(/^product:(.+)$/, async (ctx) => { const product = productById(ctx.match[1]); if (product) await showProduct(ctx, product); else await safeAnswer(ctx, "Товар не найден"); });
+bot.action("aura:custom", async (ctx) => {
+  pending.set(ctx.from.id, { type: "auraAmount" });
+  await safeAnswer(ctx);
+  await ctx.reply("<b>🔴 Пополнение Ауры</b>\n<i>🔥 Акция: 1 ₽ = 1,5 Ауры</i>\n\nНапиши, сколько Ауры тебе нужно — например: <code>150</code>.\nМинимум: 8 Ауры · максимум: 7 500 Ауры.", { parse_mode: "HTML", ...backKeyboard() });
+});
 bot.action(/^ticket:(idea|bug|report)$/, async (ctx) => {
   const kind = ctx.match[1] as TicketKind;
   pending.set(ctx.from.id, { type: "ticket", kind });
@@ -111,7 +116,7 @@ bot.action(/^ticket:(idea|bug|report)$/, async (ctx) => {
 bot.action(/^buy:(.+)$/, async (ctx) => {
   const product = productById(ctx.match[1]);
   if (!product) return safeAnswer(ctx, "Товар не найден");
-  pending.set(ctx.from.id, { type: "nick", productId: product.id });
+  pending.set(ctx.from.id, { type: "nick", purchase: product });
   await safeAnswer(ctx);
   await ctx.reply(`<b>Покупка: ${product.title}</b>\n\nНапиши свой игровой ник (латинские буквы, цифры и _). Товар будет выдан именно на этот аккаунт.`, { parse_mode: "HTML", ...backKeyboard() });
 });
@@ -130,17 +135,22 @@ bot.on("text", async (ctx) => {
     await sendStaff(`<b>${labels[state.kind]} #${ticket.id}</b>\nОт: ${ticket.user.name}${ticket.user.username ? ` (@${ticket.user.username})` : ""} · <code>${ticket.user.id}</code>\n\n${text}`);
     return ctx.reply("<b>Готово — обращение отправлено команде Aura.</b>\nЕсли идею реализуют или баг подтвердится, с тобой свяжутся насчёт награды.", { parse_mode: "HTML", ...mainKeyboard() });
   }
+  if (state.type === "auraAmount") {
+    const requested = Number(ctx.message.text.trim().replace(",", "."));
+    if (!Number.isInteger(requested) || requested < 8 || requested > 7500) return ctx.reply("Введи целое число от 8 до 7 500 — столько Ауры будет зачислено на игровой аккаунт.");
+    const rubles = Math.max(5, Math.min(5000, Math.ceil(requested / 7.5) * 5));
+    const credited = Math.round(rubles * 1.5);
+    const purchase: Purchase = { id: `aura-${credited}-${rubles}`, category: "case", title: `${credited} Ауры`, price: rubles, emoji: "🔴", description: "Донатная валюта Aura", perks: ["Курс акции: 1 ₽ = 1,5 Ауры", `Будет зачислено: ${credited} Ауры`], auraAmount: credited };
+    pending.set(ctx.from.id, { type: "nick", purchase });
+    return ctx.reply(`<b>🔴 К зачислению: ${credited} Ауры</b>\nСтоимость: <b>${money(rubles)}</b>\n\nТеперь напиши игровой ник (латинские буквы, цифры и _).`, { parse_mode: "HTML", ...backKeyboard() });
+  }
   const nick = ctx.message.text.trim();
   if (!/^[a-zA-Z0-9_]{3,16}$/.test(nick)) return ctx.reply("Ник должен быть от 3 до 16 символов: латинские буквы, цифры и _. Попробуй ещё раз.");
-  const product = productById(state.productId);
-  if (!product) { pending.delete(ctx.from.id); return ctx.reply("Товар больше недоступен. Открой магазин заново.", mainKeyboard()); }
-  const order: Order = { id: randomUUID().slice(0, 8).toUpperCase(), productId: product.id, minecraftNick: nick, createdAt: new Date().toISOString(), user: userData(ctx) };
+  const product = state.purchase;
+  const order: Order = { id: randomUUID().slice(0, 8).toUpperCase(), productId: product.id, productTitle: product.title, amountRub: product.price, auraAmount: product.auraAmount, minecraftNick: nick, createdAt: new Date().toISOString(), user: userData(ctx) };
   await saveOrder(order);
   pending.delete(ctx.from.id);
-  if (!providerToken) {
-    await sendStaff(`<b>🛒 Новый заказ #${order.id}</b>\n${product.emoji} ${product.title} · ${money(product.price)}\nНик: <code>${nick}</code>\nПокупатель: ${order.user.name} · <code>${order.user.id}</code>\n<i>Оплата в боте ещё не подключена — пользователь направлен на сайт.</i>`);
-    return ctx.reply(`<b>Заказ #${order.id} подготовлен.</b>\nОплата в Telegram ещё подключается, поэтому заверши покупку на сайте. Укажи там ник <code>${nick}</code>.`, { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("💳 Перейти к оплате", links.site)], [Markup.button.callback("← В меню", "home")]]) });
-  }
+  if (!providerToken) return ctx.reply("<b>Оплата в Telegram ещё не подключена.</b>\nАдминистратор должен добавить платёжный токен провайдера в настройки бота. Твой заказ не был оплачен.", { parse_mode: "HTML", ...mainKeyboard() });
   await ctx.replyWithInvoice({ title: `${product.title} — Aura`, description: `${product.description}. Выдача на ник ${nick}.`, payload: `aura:${order.id}`, provider_token: providerToken, currency: "RUB", prices: [{ label: product.title, amount: product.price * 100 }] });
 });
 

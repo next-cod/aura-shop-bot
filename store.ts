@@ -14,6 +14,9 @@ export type Ticket = {
 export type Order = {
   id: string;
   productId: string;
+  productTitle: string;
+  amountRub: number;
+  auraAmount?: number;
   minecraftNick: string;
   createdAt: string;
   paidAt?: string;
