@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
+import { createServer } from "node:http";
 import { Telegraf, Markup, type Context } from "telegraf";
 import { productById, productsBy, type Product, type ProductCategory } from "./catalog.js";
 import { markOrderPaid, saveOrder, saveTicket, type Order, type TicketKind } from "./store.js";
@@ -153,5 +154,14 @@ bot.on("successful_payment", async (ctx) => {
 
 bot.catch((error) => console.error("Bot error", error));
 bot.launch().then(() => console.log("Aura bot is running"));
+
+// Amvera checks that an application keeps its assigned HTTP port open.
+// The bot itself uses Telegram long polling; this endpoint only reports liveness.
+const healthPort = Number(process.env.PORT || 80);
+createServer((_request, response) => {
+  response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify({ status: "ok", service: "aura-telegram-bot" }));
+}).listen(healthPort, "0.0.0.0", () => console.log(`Health check listening on ${healthPort}`));
+
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
