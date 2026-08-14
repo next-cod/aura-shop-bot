@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
+import { setDefaultResultOrder } from "node:dns";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { Telegraf, Markup, Input, type Context } from "telegraf";
@@ -9,6 +10,10 @@ import { getManagerChatId, saveTicket, setManagerChatId, type TicketKind } from 
 // The VK worker is plain ESM and runs alongside the TypeScript Telegram bot.
 // @ts-expect-error No separate declaration file is needed for this side-effect import.
 void import("./vk-bot.js").catch((error) => console.error("Unable to start Aura VK bot", error));
+
+// Some cloud networks publish an unreachable IPv6 route for Telegram. Prefer
+// IPv4 so polling starts reliably after every deployment.
+setDefaultResultOrder("ipv4first");
 
 const token = process.env.BOT_TOKEN;
 if (!token) throw new Error("BOT_TOKEN is missing. Copy .env.example to .env and add the bot token.");
