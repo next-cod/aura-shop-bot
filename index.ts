@@ -28,7 +28,9 @@ const pending = new Map<number, Pending>();
 const telegramLinkPending = new Map<number, TelegramLinkPending>();
 const linkedMinecraftAccounts = new Map<number, string>();
 const telegramBridge = process.env.AURA_TELEGRAM_API_URL || "http://213.171.18.146:22243";
-const telegramBridgeSecret = process.env.AURA_TELEGRAM_SECRET || "";
+// Telegram uses the already configured server bridge secret until it receives
+// its own separate variable. This keeps both official bots on the same trusted bridge.
+const telegramBridgeSecret = process.env.AURA_TELEGRAM_SECRET || process.env.AURA_VK_SECRET || "";
 
 const mainKeyboard = (telegramId?: number) => Markup.inlineKeyboard([
   [Markup.button.callback("🛒 Магазин AURA", "shop"), Markup.button.callback("🧭 Обращения", "help")],
