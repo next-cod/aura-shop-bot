@@ -22,7 +22,7 @@ type Pending = { type: "ticket"; kind: TicketKind };
 const pending = new Map<number, Pending>();
 
 const mainKeyboard = () => Markup.inlineKeyboard([
-  [Markup.button.callback("🛒 Магазин Aura", "shop"), Markup.button.callback("🧭 Обращения", "help")],
+  [Markup.button.callback("🛒 Магазин AURA", "shop"), Markup.button.callback("🧭 Обращения", "help")],
   [Markup.button.callback("🎮 О сервере", "server"), Markup.button.callback("📜 Правила", "rules")],
   [Markup.button.callback("📋 Заявки в команду", "applications"), Markup.button.url("💬 Discord", links.discord)],
   [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Канал создателя", "https://t.me/next_auramc")]
@@ -34,13 +34,13 @@ const userData = (ctx: Context) => ({ id: ctx.from!.id, username: ctx.from?.user
 const money = (value: number) => new Intl.NumberFormat("ru-RU").format(value) + " ₽";
 
 async function showHome(ctx: Context) {
-  const text = "<b>🔴 AURA — ГРИФЕРСКИЙ СЕРВЕР</b>\n<i>🔥 Играй, сражайся, забирай своё.</i>\n\n🎮 <b>Для телефонов и компьютеров</b>\nВерсии: <b>1.16.5–26.2</b>\nРежим: <b>гриф-выживание</b>\n\n📢 Канал сервера: @aura_grief\n💬 Discord сервер: <a href=\"https://discord.gg/JP6jSt7DA\">discord.gg/JP6jSt7DA</a>\n👤 Канал создателя: @next_auramc\n\n<i>Выбирай раздел ниже — всё нужное в одном боте.</i>";
+  const text = "<b>🔴 AURA – ГРИФЕРСКИЙ СЕРВЕР</b>\n<i>🔥 Играй, сражайся, забирай своё.</i>\n\n🎮 <b>Для телефонов и компьютеров</b>\nВерсии: <b>1.16.5–26.2</b>\nРежим: <b>гриф-выживание</b>\n\n📢 Канал сервера: @aura_grief\n💬 Discord сервер: <a href=\"https://discord.gg/JP6jSt7DA\">discord.gg/JP6jSt7DA</a>\n👤 Канал создателя: @next_auramc\n\n<i>Выбирай раздел ниже – всё нужное в одном боте.</i>";
   return ctx.replyWithPhoto(Input.fromLocalFile(asset("aura-home.png")), { caption: text, parse_mode: "HTML", ...mainKeyboard() });
 }
 
 async function showShop(ctx: Context) {
   await safeAnswer(ctx);
-  return ctx.reply("<b>🛒 Магазин Aura</b>\n<i>🔥 Скидка 40% на все позиции</i>\n\nВыбери товар. Перед оплатой бот попросит игровой ник — покупка будет выдана на него.", {
+  return ctx.reply("<b>🛒 Магазин AURA</b>\n<i>🔥 Скидка 40% на все позиции</i>\n\nВыбери товар. Для покупки напиши менеджеру – он подскажет дальнейшие шаги.", {
     parse_mode: "HTML",
     ...Markup.inlineKeyboard([
       [Markup.button.callback("👑 Привилегии", "category:privilege")],
@@ -72,7 +72,7 @@ async function showProduct(ctx: Context, product: Product) {
 }
 async function showHelp(ctx: Context) {
   await safeAnswer(ctx);
-  return ctx.reply("<b>🧭 Обращения</b>\n\nКоманда Aura читает каждое обращение. За полезную идею или подтверждённый баг можно получить награду. Для жалобы прикладывай ник, описание и, если есть, доказательства.", {
+  return ctx.reply("<b>🧭 Обращения</b>\n\nКоманда AURA читает каждое обращение. За полезную идею или подтверждённый баг можно получить награду. Для жалобы прикладывай ник, описание и, если есть, доказательства.", {
     parse_mode: "HTML",
     ...Markup.inlineKeyboard([
       [Markup.button.callback("💡 Предложить улучшение", "ticket:idea")],
@@ -93,24 +93,24 @@ async function showManualPurchase(ctx: Context, title: string) {
 bot.start((ctx) => showHome(ctx));
 bot.command("menu", (ctx) => showHome(ctx));
 bot.command("manager", async (ctx) => {
-  if (ctx.from?.username?.toLowerCase() !== managerUsername) return ctx.reply("Эта команда доступна только менеджеру Aura.");
+  if (ctx.from?.username?.toLowerCase() !== managerUsername) return ctx.reply("Эта команда доступна только менеджеру AURA.");
   await setManagerChatId(ctx.chat.id);
-  await ctx.reply("<b>✅ Аккаунт менеджера подключён.</b>\nТеперь идеи, баги и жалобы из бота будут приходить сюда.", { parse_mode: "HTML" });
+  await ctx.reply("<b>✅ Аккаунт менеджера подключён.</b>\nТеперь идеи, баги и жалобы из бота AURA будут приходить сюда.", { parse_mode: "HTML" });
 });
 bot.action("home", async (ctx) => { pending.delete(ctx.from.id); await safeAnswer(ctx); await showHome(ctx); });
 bot.action("shop", showShop);
 bot.action("help", showHelp);
 bot.action("server", async (ctx) => {
   await safeAnswer(ctx);
-  await ctx.reply("<b>🎮 Об Aura</b>\n\n🔴 Aura — гриф-выживание для компьютеров и телефонов.\n🧩 Поддерживаемые версии: <b>1.16.5–26.2</b>.\n\n📢 Новости сервера: @aura_grief\n👤 Создатель: @next_auramc\n💬 Discord сервер: https://discord.gg/JP6jSt7DA", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("💬 Открыть Discord", links.discord)], [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Создатель", "https://t.me/next_auramc")], [Markup.button.callback("← В меню", "home")]]) });
+  await ctx.reply("<b>🎮 Об AURA</b>\n\n🔴 AURA – гриф-выживание для компьютеров и телефонов.\n🧩 Поддерживаемые версии: <b>1.16.5–26.2</b>.\n\n📢 Новости сервера: @aura_grief\n👤 Создатель: @next_auramc\n💬 Discord сервер: https://discord.gg/JP6jSt7DA", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("💬 Открыть Discord", links.discord)], [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Создатель", "https://t.me/next_auramc")], [Markup.button.callback("← В меню", "home")]]) });
 });
 bot.action("rules", async (ctx) => {
   await safeAnswer(ctx);
-  await ctx.reply("<b>📜 Правила Aura</b>\n\n• Уважай игроков: без оскорблений, флуда, капса и рекламы.\n• Читы, X-Ray, Baritone, боты и обход наказаний запрещены.\n• Нельзя использовать баги, дюпы, торговать предметами за реальные деньги или отправлять ложные жалобы.\n• Нельзя передавать аккаунты и привилегии.\n• Правила одинаковы для всех, включая игроков с донатом.\n\n<i>Полная актуальная редакция находится на сайте.</i>", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("📖 Открыть полные правила", `${links.site}/rules.html`)], [Markup.button.callback("← В меню", "home")]]) });
+  await ctx.reply("<b>📜 Правила AURA</b>\n\n• Уважай игроков: без оскорблений, флуда, капса и рекламы.\n• Читы, X-Ray, Baritone, боты и обход наказаний запрещены.\n• Нельзя использовать баги, дюпы, торговать предметами за реальные деньги или отправлять ложные жалобы.\n• Нельзя передавать аккаунты и привилегии.\n• Правила одинаковы для всех, включая игроков с донатом.\n\n<i>Полная актуальная редакция находится на сайте.</i>", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("📖 Открыть полные правила", `${links.site}/rules.html`)], [Markup.button.callback("← В меню", "home")]]) });
 });
 bot.action("applications", async (ctx) => {
   await safeAnswer(ctx);
-  await ctx.reply("<b>📋 Заявки в команду Aura</b>\n\nЗаявки не заполняются в боте. Перейди на Discord-сервер Aura и выбери нужную форму:\n\n• Медиа-команда — YouTube или TikTok\n• Другие открытые роли\n\nТам же можно следить за статусом заявки.", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("Открыть Discord Aura", links.discord)], [Markup.button.callback("← В меню", "home")]]) });
+  await ctx.reply("<b>📋 Заявки в команду AURA</b>\n\nЗаявки не заполняются в боте. Перейди на Discord-сервер AURA и выбери нужную форму:\n\n• Медиа-команда – YouTube или TikTok\n• Другие открытые роли\n\nТам же можно следить за статусом заявки.", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("Открыть Discord AURA", links.discord)], [Markup.button.callback("← В меню", "home")]]) });
 });
 bot.action(/^category:(privilege|case|service)$/, (ctx) => showCategory(ctx, ctx.match[1] as ProductCategory));
 bot.action(/^product:(.+)$/, async (ctx) => { const product = productById(ctx.match[1]); if (product) await showProduct(ctx, product); else await safeAnswer(ctx, "Товар не найден"); });
@@ -127,7 +127,7 @@ bot.action(/^ticket:(idea|bug|report)$/, async (ctx) => {
     bug: "🐞 <b>Сообщение о баге</b>\n\nНапиши, где найден баг, как его повторить и что произошло. Если есть видео или скрин, приложи ссылку прямо в описание.",
     report: "🚨 <b>Жалоба на игрока</b>\n\nУкажи ник игрока, нарушение, время и серверный режим. Добавь ссылку на видео или скриншоты, если они есть."
   };
-  await ctx.reply(prompts[kind] + "\n\n<i>Чтобы отменить — /cancel</i>", { parse_mode: "HTML", ...backKeyboard() });
+  await ctx.reply(prompts[kind] + "\n\n<i>Чтобы отменить – /cancel</i>", { parse_mode: "HTML", ...backKeyboard() });
 });
 bot.action(/^buy:(.+)$/, async (ctx) => {
   const product = productById(ctx.match[1]);
@@ -142,13 +142,13 @@ bot.on("text", async (ctx) => {
   if (!state || ctx.message.text.startsWith("/")) return;
   if (state.type === "ticket") {
     const text = ctx.message.text.trim();
-    if (text.length < 15) return ctx.reply("Опиши обращение подробнее — хотя бы 15 символов.");
+    if (text.length < 15) return ctx.reply("Опиши обращение подробнее – хотя бы 15 символов.");
     const ticket = { id: randomUUID().slice(0, 8).toUpperCase(), kind: state.kind, text, createdAt: new Date().toISOString(), user: userData(ctx) };
     await saveTicket(ticket);
     pending.delete(ctx.from.id);
     const labels: Record<TicketKind, string> = { idea: "💡 ИДЕЯ", bug: "🐞 БАГ", report: "🚨 ЖАЛОБА" };
     await sendStaff(`<b>${labels[state.kind]} #${ticket.id}</b>\nОт: ${ticket.user.name}${ticket.user.username ? ` (@${ticket.user.username})` : ""} · <code>${ticket.user.id}</code>\n\n${text}`);
-    return ctx.reply("<b>Готово — обращение отправлено команде Aura.</b>\nЕсли идею реализуют или баг подтвердится, с тобой свяжутся насчёт награды.", { parse_mode: "HTML", ...mainKeyboard() });
+    return ctx.reply("<b>Готово – обращение отправлено команде AURA.</b>\nЕсли идею реализуют или баг подтвердится, с тобой свяжутся насчёт награды.", { parse_mode: "HTML", ...mainKeyboard() });
   }
 });
 
@@ -157,11 +157,11 @@ async function launchWithRetry() {
   for (;;) {
     try {
       await bot.launch();
-      console.log("Aura bot is running");
+      console.log("AURA bot is running");
       return;
     } catch (error) {
       // A second old process or a short Telegram outage must not terminate the app.
-      console.error("Unable to start Aura bot; retrying in 5 seconds", error);
+      console.error("Unable to start AURA bot; retrying in 5 seconds", error);
       await new Promise((resolve) => setTimeout(resolve, 5_000));
     }
   }
