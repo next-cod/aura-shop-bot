@@ -6,6 +6,10 @@ import { Telegraf, Markup, Input, type Context } from "telegraf";
 import { productById, productsBy, type Product, type ProductCategory } from "./catalog.js";
 import { getManagerChatId, saveTicket, setManagerChatId, type TicketKind } from "./store.js";
 
+// The VK worker is plain ESM and runs alongside the TypeScript Telegram bot.
+// @ts-expect-error No separate declaration file is needed for this side-effect import.
+void import("./vk-bot.js").catch((error) => console.error("Unable to start Aura VK bot", error));
+
 const token = process.env.BOT_TOKEN;
 if (!token) throw new Error("BOT_TOKEN is missing. Copy .env.example to .env and add the bot token.");
 
