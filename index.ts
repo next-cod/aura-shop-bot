@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { Telegraf, Markup, Input, type Context } from "telegraf";
 import { productById, productsBy, type Product, type ProductCategory } from "./catalog.js";
-import { markOrderPaid, saveOrder, saveTicket, type Order, type TicketKind } from "./store.js";
+import { getManagerChatId, saveTicket, setManagerChatId, type TicketKind } from "./store.js";
 
 const token = process.env.BOT_TOKEN;
 if (!token) throw new Error("BOT_TOKEN is missing. Copy .env.example to .env and add the bot token.");
@@ -16,7 +16,7 @@ const links = {
   telegram: process.env.TELEGRAM_CHANNEL_URL || "https://t.me/aura_grief"
 };
 const staffChatId = Number(process.env.STAFF_CHAT_ID || 0) || undefined;
-const providerToken = process.env.PAYMENT_PROVIDER_TOKEN;
+const managerUsername = (process.env.MANAGER_USERNAME || "manager_mcaura").toLowerCase();
 const asset = (name: string) => join(process.cwd(), "assets", name);
 type Purchase = Pick<Product, "id" | "category" | "title" | "price" | "emoji" | "description" | "perks"> & { auraAmount?: number };
 type Pending = { type: "ticket"; kind: TicketKind } | { type: "nick"; purchase: Purchase } | { type: "auraAmount" };
@@ -84,12 +84,18 @@ async function showHelp(ctx: Context) {
   });
 }
 async function sendStaff(text: string) {
-  if (!staffChatId) return;
-  await bot.telegram.sendMessage(staffChatId, text, { parse_mode: "HTML" }).catch((error) => console.error("Unable to send staff notification", error));
+  const recipient = staffChatId || await getManagerChatId();
+  if (!recipient) return;
+  await bot.telegram.sendMessage(recipient, text, { parse_mode: "HTML" }).catch((error) => console.error("Unable to send staff notification", error));
 }
 
 bot.start((ctx) => showHome(ctx));
 bot.command("menu", (ctx) => showHome(ctx));
+bot.command("manager", async (ctx) => {
+  if (ctx.from?.username?.toLowerCase() !== managerUsername) return ctx.reply("Эта команда доступна только менеджеру Aura.");
+  await setManagerChatId(ctx.chat.id);
+  await ctx.reply("<b>✅ Аккаунт менеджера подключён.</b>\nТеперь идеи, баги и жалобы из бота будут приходить сюда.", { parse_mode: "HTML" });
+});
 bot.action("home", async (ctx) => { pending.delete(ctx.from.id); await safeAnswer(ctx); await showHome(ctx); });
 bot.action("shop", showShop);
 bot.action("help", showHelp);
@@ -103,7 +109,7 @@ bot.action("rules", async (ctx) => {
 });
 bot.action("applications", async (ctx) => {
   await safeAnswer(ctx);
-  await ctx.reply("<b>📋 Заявки в команду Aura</b>\n\nЗаявки не заполняются в боте. Перейди на Discord-сервер Aura и выбери нужную форму:\n\n• Helper\n• Медиа-команда — YouTube или TikTok\n• Другие открытые роли\n\nТам же можно следить за статусом заявки.", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("Открыть Discord Aura", links.discord)], [Markup.button.callback("← В меню", "home")]]) });
+  await ctx.reply("<b>📋 Заявки в команду Aura</b>\n\nЗаявки не заполняются в боте. Перейди на Discord-сервер Aura и выбери нужную форму:\n\n• Медиа-команда — YouTube или TikTok\n• Другие открытые роли\n\nТам же можно следить за статусом заявки.", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("Открыть Discord Aura", links.discord)], [Markup.button.callback("← В меню", "home")]]) });
 });
 bot.action(/^category:(privilege|case|service)$/, (ctx) => showCategory(ctx, ctx.match[1] as ProductCategory));
 bot.action(/^product:(.+)$/, async (ctx) => { const product = productById(ctx.match[1]); if (product) await showProduct(ctx, product); else await safeAnswer(ctx, "Товар не найден"); });
@@ -157,19 +163,9 @@ bot.on("text", async (ctx) => {
   const nick = ctx.message.text.trim();
   if (!/^[a-zA-Z0-9_]{3,16}$/.test(nick)) return ctx.reply("Ник должен быть от 3 до 16 символов: латинские буквы, цифры и _. Попробуй ещё раз.");
   const product = state.purchase;
-  const order: Order = { id: randomUUID().slice(0, 8).toUpperCase(), productId: product.id, productTitle: product.title, amountRub: product.price, auraAmount: product.auraAmount, minecraftNick: nick, createdAt: new Date().toISOString(), user: userData(ctx) };
-  await saveOrder(order);
   pending.delete(ctx.from.id);
-  if (!providerToken) return ctx.reply("<b>Оплата в Telegram ещё не подключена.</b>\nАдминистратор должен добавить платёжный токен провайдера в настройки бота. Твой заказ не был оплачен.", { parse_mode: "HTML", ...mainKeyboard() });
-  await ctx.replyWithInvoice({ title: `${product.title} — Aura`, description: `${product.description}. Выдача на ник ${nick}.`, payload: `aura:${order.id}`, provider_token: providerToken, currency: "RUB", prices: [{ label: product.title, amount: product.price * 100 }] });
-});
-
-bot.on("pre_checkout_query", async (ctx) => { await ctx.answerPreCheckoutQuery(true); });
-bot.on("successful_payment", async (ctx) => {
-  const orderId = ctx.message.successful_payment.invoice_payload.replace("aura:", "");
-  await markOrderPaid(orderId);
-  await sendStaff(`<b>✅ ОПЛАЧЕН ЗАКАЗ #${orderId}</b>\nПокупатель: ${displayName(ctx)} · <code>${ctx.from.id}</code>\nПроверьте заказ в data/aura-bot.json и выдайте товар на указанный ник.`);
-  await ctx.reply("<b>Оплата прошла! 🎉</b>\nЗаказ передан команде Aura на выдачу. Мы выдадим покупку на указанный игровой ник.", { parse_mode: "HTML", ...mainKeyboard() });
+  const request = `Ник: ${nick}\nТовар: ${product.title}`;
+  await ctx.reply(`<b>🛒 Заявка подготовлена</b>\n\nОтправь менеджеру <b>@manager_mcaura</b> это сообщение:\n\n<code>${request}</code>\n\nМенеджер пришлёт реквизиты для оплаты. После оплаты и проверки он выдаст товар на ник <code>${nick}</code>.`, { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("💬 Написать менеджеру", "https://t.me/manager_mcaura")], [Markup.button.callback("← В меню", "home")]]) });
 });
 
 bot.catch((error) => console.error("Bot error", error));
