@@ -32,8 +32,8 @@ export const catalog: Product[] = [
   { id: "aura-case-1", category: "case", title: "1 кейс с аурой", price: 47, oldPrice: 79, emoji: "🔴", image: "1 кейс с аурой.webp", description: "Кейс с аурой", perks: ["1 ключ", "Выдача на игровой аккаунт"] },
   { id: "aura-case-3", category: "case", title: "3 кейса с аурой", price: 143, oldPrice: 239, emoji: "🔴", image: "3 кейса с аурой.webp", description: "Набор кейсов с аурой", perks: ["3 ключа", "Выдача на игровой аккаунт"] },
   { id: "aura-case-5", category: "case", title: "5 кейсов с аурой", price: 227, oldPrice: 379, emoji: "🔴", image: "5 кейсов с аурой.webp", description: "Набор кейсов с аурой", perks: ["5 ключей", "Выдача на игровой аккаунт"] },
-  { id: "unban", category: "service", title: "Разбан", price: 209, oldPrice: 349, emoji: "🔓", image: "Разбан.webp", description: "Снятие блокировки", perks: ["После проверки администрацией"] },
-  { id: "unmute", category: "service", title: "Размут", price: 71, oldPrice: 119, emoji: "🔊", image: "Размут.webp", description: "Снятие мута", perks: ["После проверки администрацией"] }
+  { id: "unban", category: "service", title: "Разбан", price: 209, oldPrice: 349, emoji: "🔓", image: "Разбан.webp", description: "Снятие блокировки", perks: ["Выдаётся после оплаты"] },
+  { id: "unmute", category: "service", title: "Размут", price: 71, oldPrice: 119, emoji: "🔊", image: "Размут.webp", description: "Снятие мута", perks: ["Выдаётся после оплаты"] }
 ];
 
 export const productsBy = (category: ProductCategory) => catalog.filter((product) => product.category === category);
