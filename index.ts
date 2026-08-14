@@ -7,10 +7,6 @@ import { Telegraf, Markup, Input, type Context } from "telegraf";
 import { productById, productsBy, type Product, type ProductCategory } from "./catalog.js";
 import { getManagerChatId, saveTicket, setManagerChatId, type TicketKind } from "./store.js";
 
-// The VK worker is plain ESM and runs alongside the TypeScript Telegram bot.
-// @ts-expect-error No separate declaration file is needed for this side-effect import.
-void import("./vk-bot.js").catch((error) => console.error("Unable to start Aura VK bot", error));
-
 // Some cloud networks publish an unreachable IPv6 route for Telegram. Prefer
 // IPv4 so polling starts reliably after every deployment.
 setDefaultResultOrder("ipv4first");
@@ -35,7 +31,7 @@ const linkedMinecraftAccounts = new Map<number, string>();
 const telegramBridge = process.env.AURA_TELEGRAM_API_URL || "http://213.171.18.146:22243";
 // Telegram uses the already configured server bridge secret until it receives
 // its own separate variable. This keeps both official bots on the same trusted bridge.
-const telegramBridgeSecret = process.env.AURA_TELEGRAM_SECRET || process.env.AURA_VK_SECRET || "";
+const telegramBridgeSecret = process.env.AURA_TELEGRAM_SECRET || process.env.AURA_VK_SECRET || process.env.AURA_SHARED_SECRET || "";
 
 const mainKeyboard = (telegramId?: number) => Markup.inlineKeyboard([
   [Markup.button.callback("🛒 Магазин AURA", "shop"), Markup.button.callback("🧭 Обращения", "help")],
@@ -53,7 +49,28 @@ const displayName = (ctx: Context) => [ctx.from?.first_name, ctx.from?.last_name
 const userData = (ctx: Context) => ({ id: ctx.from!.id, username: ctx.from?.username, name: displayName(ctx) });
 const money = (value: number) => new Intl.NumberFormat("ru-RU").format(value) + " ₽";
 
+async function telegramApi(path: string, data: Record<string, string>) {
+  if (!telegramBridgeSecret) return { ok: false, code: "bridge_not_configured" } as Record<string, unknown>;
+  const response = await fetch(`${telegramBridge}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret },
+    body: JSON.stringify(data)
+  });
+  return await response.json() as Record<string, unknown>;
+}
+
+async function refreshTelegramLink(telegramId: number) {
+  try {
+    const status = await telegramApi("/telegram/account/status", { telegramId: String(telegramId) });
+    if (status.linked === true && typeof status.nickname === "string") linkedMinecraftAccounts.set(telegramId, status.nickname);
+    else linkedMinecraftAccounts.delete(telegramId);
+  } catch {
+    linkedMinecraftAccounts.delete(telegramId);
+  }
+}
+
 async function showHome(ctx: Context) {
+  if (ctx.from?.id) await refreshTelegramLink(ctx.from.id);
   const text = "<b>🔴 AURA – ГРИФЕРСКИЙ СЕРВЕР</b>\n<i>🔥 Играй, сражайся, забирай своё.</i>\n\n🎮 <b>Для телефонов и компьютеров</b>\nВерсии: <b>1.16.5–26.2</b>\nРежим: <b>гриф-выживание</b>\n\n📢 Канал сервера: @aura_grief\n💬 Discord сервер: <a href=\"https://discord.gg/JP6jSt7DA\">discord.gg/JP6jSt7DA</a>\n👤 Канал создателя: @next_auramc\n\n<i>Выбирай раздел ниже – всё нужное в одном боте.</i>";
   return ctx.replyWithPhoto(Input.fromLocalFile(asset("aura-home.png")), { caption: text, parse_mode: "HTML", ...withoutLinkPreview, ...mainKeyboard(ctx.from?.id) });
 }
@@ -122,6 +139,7 @@ bot.action("shop", showShop);
 bot.action("help", showHelp);
 bot.action("profile", async (ctx) => {
   await safeAnswer(ctx);
+  await refreshTelegramLink(ctx.from.id);
   const nickname = linkedMinecraftAccounts.get(ctx.from.id);
   const accountButton = nickname
     ? Markup.button.callback("🔓 Отвязать аккаунт", "profile:unlink")
@@ -143,14 +161,20 @@ bot.action("profile:link", async (ctx) => {
   await ctx.reply("<b>🔗 Привязка аккаунта AURA</b>\n\nОтправь свой игровой ник Minecraft.\n\n<i>Перед этим зайди на сервер AURA, напиши <code>/link</code> и выбери Telegram.</i>", { parse_mode: "HTML" });
 });
 bot.action("profile:unlink", async (ctx) => {
+  const result = await telegramApi("/telegram/action", { telegramId: String(ctx.from.id), action: "unlink" });
+  if (result.ok !== true) return safeAnswer(ctx, "Аккаунт ещё не привязан");
   linkedMinecraftAccounts.delete(ctx.from.id);
   await safeAnswer(ctx, "Аккаунт отвязан");
-  await ctx.reply("Игровой аккаунт отвязан от Telegram.");
+  await ctx.reply("Игровой аккаунт отвязан от Telegram.", mainKeyboard(ctx.from.id));
 });
 bot.action(/^(profile:kick|profile:reset|profile:2fa-off)$/, async (ctx) => {
-  if (!linkedMinecraftAccounts.has(ctx.from.id)) return safeAnswer(ctx, "Сначала привяжи аккаунт");
-  await safeAnswer(ctx, "Команда отправлена");
-  await ctx.reply("Команда отправлена на сервер AURA.");
+  const actions: Record<string, string> = { "profile:kick": "kick", "profile:reset": "reset_password", "profile:2fa-off": "two_factor_off" };
+  const result = await telegramApi("/telegram/action", { telegramId: String(ctx.from.id), action: actions[ctx.match[1]] });
+  if (result.ok !== true) return safeAnswer(ctx, "Сначала привяжи аккаунт");
+  await safeAnswer(ctx, "Готово");
+  if (ctx.match[1] === "profile:reset") return ctx.reply(`Новый пароль: <code>${String(result.password || "")}</code>\nСохрани его: старый пароль больше не действует.`, { parse_mode: "HTML" });
+  if (ctx.match[1] === "profile:2fa-off") return ctx.reply("Двухэтапная авторизация отключена.");
+  await ctx.reply("Аккаунт отключён от сервера.");
 });
 bot.action("server", async (ctx) => {
   await safeAnswer(ctx);
