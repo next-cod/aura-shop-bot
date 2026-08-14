@@ -24,8 +24,10 @@ const managerUsername = (process.env.MANAGER_USERNAME || "manager_mcaura").toLow
 const asset = (name: string) => join(process.cwd(), "assets", name);
 type Pending = { type: "ticket"; kind: TicketKind };
 const pending = new Map<number, Pending>();
+const linkedMinecraftAccounts = new Map<number, string>();
 
 const mainKeyboard = () => Markup.inlineKeyboard([
+  [Markup.button.callback("🔐 Профиль", "profile")],
   [Markup.button.callback("🛒 Магазин AURA", "shop"), Markup.button.callback("🧭 Обращения", "help")],
   [Markup.button.callback("🎮 О сервере", "server"), Markup.button.callback("📜 Правила", "rules")],
   [Markup.button.callback("📋 Заявки в команду", "applications"), Markup.button.url("💬 Discord", links.discord)],
@@ -105,6 +107,37 @@ bot.command("manager", async (ctx) => {
 bot.action("home", async (ctx) => { pending.delete(ctx.from.id); await safeAnswer(ctx); await showHome(ctx); });
 bot.action("shop", showShop);
 bot.action("help", showHelp);
+bot.action("profile", async (ctx) => {
+  await safeAnswer(ctx);
+  const nickname = linkedMinecraftAccounts.get(ctx.from.id);
+  const accountButton = nickname
+    ? Markup.button.callback("🔓 Отвязать аккаунт", "profile:unlink")
+    : Markup.button.callback("🔗 Привязать аккаунт", "profile:link");
+  const caption = nickname
+    ? `<b>🔐 Профиль AURA</b>\n\nИгровой аккаунт: <b>${nickname}</b>`
+    : "<b>🔐 Профиль AURA</b>\n\nИгровой аккаунт пока не привязан.";
+  await ctx.reply(caption, { parse_mode: "HTML", ...Markup.inlineKeyboard([
+    [Markup.button.callback("🚪 Кикнуть аккаунт", "profile:kick")],
+    [Markup.button.callback("🔑 Восстановить пароль", "profile:reset")],
+    [Markup.button.callback("🛡 Отключить двухэтапную авторизацию", "profile:2fa-off")],
+    [accountButton],
+    [Markup.button.callback("← В меню", "home")]
+  ]) });
+});
+bot.action("profile:link", async (ctx) => {
+  await safeAnswer(ctx);
+  await ctx.reply("В Minecraft напиши <code>/link</code> и подтверди привязку в игре.", { parse_mode: "HTML" });
+});
+bot.action("profile:unlink", async (ctx) => {
+  linkedMinecraftAccounts.delete(ctx.from.id);
+  await safeAnswer(ctx, "Аккаунт отвязан");
+  await ctx.reply("Игровой аккаунт отвязан от Telegram.");
+});
+bot.action(/^(profile:kick|profile:reset|profile:2fa-off)$/, async (ctx) => {
+  if (!linkedMinecraftAccounts.has(ctx.from.id)) return safeAnswer(ctx, "Сначала привяжи аккаунт");
+  await safeAnswer(ctx, "Команда отправлена");
+  await ctx.reply("Команда отправлена на сервер AURA.");
+});
 bot.action("server", async (ctx) => {
   await safeAnswer(ctx);
   await ctx.reply("<b>🎮 Об AURA</b>\n\n🔴 AURA – гриф-выживание для компьютеров и телефонов.\n🧩 Поддерживаемые версии: <b>1.16.5–26.2</b>.\n\n📢 Новости сервера: @aura_grief\n👤 Создатель: @next_auramc\n💬 Discord сервер: https://discord.gg/JP6jSt7DA", { parse_mode: "HTML", ...withoutLinkPreview, ...Markup.inlineKeyboard([[Markup.button.url("💬 Открыть Discord", links.discord)], [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Создатель", "https://t.me/next_auramc")], [Markup.button.callback("← В меню", "home")]]) });
