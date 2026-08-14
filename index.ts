@@ -18,7 +18,7 @@ const links = {
 const staffChatId = Number(process.env.STAFF_CHAT_ID || 0) || undefined;
 const managerUsername = (process.env.MANAGER_USERNAME || "manager_mcaura").toLowerCase();
 const asset = (name: string) => join(process.cwd(), "assets", name);
-type Pending = { type: "ticket"; kind: TicketKind } | { type: "auraAmount" };
+type Pending = { type: "ticket"; kind: TicketKind };
 const pending = new Map<number, Pending>();
 
 const mainKeyboard = () => Markup.inlineKeyboard([
@@ -63,10 +63,9 @@ async function showCategory(ctx: Context, category: ProductCategory) {
 async function showProduct(ctx: Context, product: Product) {
   await safeAnswer(ctx);
   const perks = product.perks.map((perk) => `• ${perk}`).join("\n");
-  return ctx.replyWithPhoto(Input.fromLocalFile(asset(product.image)), { caption: `<b>${product.emoji} ${product.title}</b>\n${product.description}\n\n${perks}\n\n<s>${money(product.oldPrice)}</s> → <b>${money(product.price)}</b> <i>🔥 −40%</i>`,
+  return ctx.replyWithPhoto(Input.fromLocalFile(asset(product.image)), { caption: `<b>${product.emoji} ${product.title}</b>\n${product.description}\n\n${perks}\n\n<s>${money(product.oldPrice)}</s> → <b>${money(product.price)}</b> <i>🔥 −40%</i>\n\n<b>🛒 Для покупки:</b> напиши менеджеру @manager_mcaura и укажи свой игровой ник и товар <b>${product.title}</b>.`,
     parse_mode: "HTML",
     ...Markup.inlineKeyboard([
-      [Markup.button.callback("💳 Купить в Telegram", `buy:${product.id}`)],
       [Markup.button.callback("← К списку", `category:${product.category}`)]
     ])
   });
@@ -88,7 +87,7 @@ async function sendStaff(text: string) {
   await bot.telegram.sendMessage(recipient, text, { parse_mode: "HTML" }).catch((error) => console.error("Unable to send staff notification", error));
 }
 async function showManualPurchase(ctx: Context, title: string) {
-  await ctx.reply(`<b>🛒 Покупка: ${title}</b>\n\nНапиши менеджеру <b>@manager_mcaura</b> и укажи:\n\n• свой игровой ник\n• товар, который хочешь купить\n\n<i>Менеджер ответит и поможет оформить покупку.</i>`, { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("💬 Написать менеджеру", "https://t.me/manager_mcaura")], [Markup.button.callback("← В меню", "home")]]) });
+  await ctx.reply(`<b>🛒 Покупка: ${title}</b>\n\nНапиши менеджеру @manager_mcaura и укажи:\n\n• свой игровой ник\n• товар, который хочешь купить\n\n<i>Менеджер ответит и поможет оформить покупку.</i>`, { parse_mode: "HTML", ...backKeyboard() });
 }
 
 bot.start((ctx) => showHome(ctx));
@@ -116,9 +115,8 @@ bot.action("applications", async (ctx) => {
 bot.action(/^category:(privilege|case|service)$/, (ctx) => showCategory(ctx, ctx.match[1] as ProductCategory));
 bot.action(/^product:(.+)$/, async (ctx) => { const product = productById(ctx.match[1]); if (product) await showProduct(ctx, product); else await safeAnswer(ctx, "Товар не найден"); });
 bot.action("aura:custom", async (ctx) => {
-  pending.set(ctx.from.id, { type: "auraAmount" });
   await safeAnswer(ctx);
-  await ctx.reply("<b>🔴 Пополнение Ауры</b>\n<i>🔥 Акция: 1 ₽ = 1,5 Ауры</i>\n\nНапиши, сколько Ауры тебе нужно — например: <code>150</code>.\nМинимум: 8 Ауры · максимум: 7 500 Ауры.", { parse_mode: "HTML", ...backKeyboard() });
+  await ctx.reply("<b>🔴 Пополнение Ауры</b>\n<i>🔥 Акция: 1 ₽ = 1,5 Ауры</i>\n\nДля покупки напиши менеджеру @manager_mcaura:\n\n• свой игровой ник\n• сколько Ауры хочешь купить\n\n<i>Менеджер поможет оформить покупку.</i>", { parse_mode: "HTML", ...backKeyboard() });
 });
 bot.action(/^ticket:(idea|bug|report)$/, async (ctx) => {
   const kind = ctx.match[1] as TicketKind;
@@ -151,15 +149,6 @@ bot.on("text", async (ctx) => {
     const labels: Record<TicketKind, string> = { idea: "💡 ИДЕЯ", bug: "🐞 БАГ", report: "🚨 ЖАЛОБА" };
     await sendStaff(`<b>${labels[state.kind]} #${ticket.id}</b>\nОт: ${ticket.user.name}${ticket.user.username ? ` (@${ticket.user.username})` : ""} · <code>${ticket.user.id}</code>\n\n${text}`);
     return ctx.reply("<b>Готово — обращение отправлено команде Aura.</b>\nЕсли идею реализуют или баг подтвердится, с тобой свяжутся насчёт награды.", { parse_mode: "HTML", ...mainKeyboard() });
-  }
-  if (state.type === "auraAmount") {
-    const requested = Number(ctx.message.text.trim().replace(",", "."));
-    if (!Number.isInteger(requested) || requested < 8 || requested > 7500) return ctx.reply("Введи целое число от 8 до 7 500 — столько Ауры будет зачислено на игровой аккаунт.");
-    const rubles = Math.max(5, Math.min(5000, Math.ceil(requested / 7.5) * 5));
-    const credited = Math.round(rubles * 1.5);
-    pending.delete(ctx.from.id);
-    await ctx.reply(`<b>🔴 Выбрано: ${credited} Ауры</b>\nСтоимость по акции: <b>${money(rubles)}</b>`, { parse_mode: "HTML" });
-    return showManualPurchase(ctx, `${credited} Ауры`);
   }
 });
 
