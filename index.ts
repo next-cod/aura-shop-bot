@@ -27,11 +27,11 @@ const pending = new Map<number, Pending>();
 const linkedMinecraftAccounts = new Map<number, string>();
 
 const mainKeyboard = () => Markup.inlineKeyboard([
-  [Markup.button.callback("🔐 Профиль", "profile")],
   [Markup.button.callback("🛒 Магазин AURA", "shop"), Markup.button.callback("🧭 Обращения", "help")],
   [Markup.button.callback("🎮 О сервере", "server"), Markup.button.callback("📜 Правила", "rules")],
   [Markup.button.callback("📋 Заявки в команду", "applications"), Markup.button.url("💬 Discord", links.discord)],
-  [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Канал создателя", "https://t.me/next_auramc")]
+  [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Канал создателя", "https://t.me/next_auramc")],
+  [Markup.button.callback("🔗 Привязать аккаунт", "profile:link")]
 ]);
 const backKeyboard = () => Markup.inlineKeyboard([[Markup.button.callback("← В главное меню", "home")]]);
 const safeAnswer = (ctx: Context, text?: string) => ctx.answerCbQuery(text).catch(() => undefined);
