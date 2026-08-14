@@ -41,7 +41,7 @@ async function showHome(ctx: Context) {
 
 async function showShop(ctx: Context) {
   await safeAnswer(ctx);
-  return ctx.editMessageText("<b>🛒 Магазин Aura</b>\n<i>🔥 Скидка 40% на все позиции</i>\n\nВыбери товар. Перед оплатой бот попросит игровой ник — покупка будет выдана на него.", {
+  return ctx.reply("<b>🛒 Магазин Aura</b>\n<i>🔥 Скидка 40% на все позиции</i>\n\nВыбери товар. Перед оплатой бот попросит игровой ник — покупка будет выдана на него.", {
     parse_mode: "HTML",
     ...Markup.inlineKeyboard([
       [Markup.button.callback("👑 Привилегии", "category:privilege")],
@@ -59,7 +59,7 @@ async function showCategory(ctx: Context, category: ProductCategory) {
   await safeAnswer(ctx);
   const rows = productsBy(category).map((product) => [Markup.button.callback(`${product.emoji} ${product.title} · ${money(product.oldPrice)} → ${money(product.price)} 🔥`, `product:${product.id}`)]);
   rows.push([Markup.button.callback("← К категориям", "shop")]);
-  return ctx.editMessageText(`<b>${categoryTitle(category)}</b>\n<i>🔥 Все цены уже со скидкой 40%</i>\n\nНажми на товар, чтобы посмотреть состав и купить прямо в Telegram.`, { parse_mode: "HTML", ...Markup.inlineKeyboard(rows) });
+  return ctx.reply(`<b>${categoryTitle(category)}</b>\n<i>🔥 Все цены уже со скидкой 40%</i>\n\nНажми на товар, чтобы посмотреть состав и купить прямо в Telegram.`, { parse_mode: "HTML", ...Markup.inlineKeyboard(rows) });
 }
 async function showProduct(ctx: Context, product: Product) {
   await safeAnswer(ctx);
@@ -74,7 +74,7 @@ async function showProduct(ctx: Context, product: Product) {
 }
 async function showHelp(ctx: Context) {
   await safeAnswer(ctx);
-  return ctx.editMessageText("<b>🧭 Обращения</b>\n\nКоманда Aura читает каждое обращение. За полезную идею или подтверждённый баг можно получить награду. Для жалобы прикладывай ник, описание и, если есть, доказательства.", {
+  return ctx.reply("<b>🧭 Обращения</b>\n\nКоманда Aura читает каждое обращение. За полезную идею или подтверждённый баг можно получить награду. Для жалобы прикладывай ник, описание и, если есть, доказательства.", {
     parse_mode: "HTML",
     ...Markup.inlineKeyboard([
       [Markup.button.callback("💡 Предложить улучшение", "ticket:idea")],
@@ -95,15 +95,15 @@ bot.action("shop", showShop);
 bot.action("help", showHelp);
 bot.action("server", async (ctx) => {
   await safeAnswer(ctx);
-  await ctx.editMessageText("<b>🎮 Об Aura</b>\n\n🔴 Aura — гриф-выживание для компьютеров и телефонов.\n🧩 Поддерживаемые версии: <b>1.16.5 и новые</b>.\n\n📢 Новости сервера: @aura_grief\n👤 Создатель: @next_auramc\n💬 В Discord находятся общение, поддержка и заявки в команду.", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("💬 Открыть Discord", links.discord)], [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Создатель", "https://t.me/next_auramc")], [Markup.button.callback("← В меню", "home")]]) });
+  await ctx.reply("<b>🎮 Об Aura</b>\n\n🔴 Aura — гриф-выживание для компьютеров и телефонов.\n🧩 Поддерживаемые версии: <b>1.16.5–26.2</b>.\n\n📢 Новости сервера: @aura_grief\n👤 Создатель: @next_auramc\n💬 Discord сервер: https://discord.gg/JP6jSt7DA", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("💬 Открыть Discord", links.discord)], [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Создатель", "https://t.me/next_auramc")], [Markup.button.callback("← В меню", "home")]]) });
 });
 bot.action("rules", async (ctx) => {
   await safeAnswer(ctx);
-  await ctx.editMessageText("<b>📜 Правила Aura</b>\n\n• Уважай игроков: без оскорблений, флуда, капса и рекламы.\n• Читы, X-Ray, Baritone, боты и обход наказаний запрещены.\n• Нельзя использовать баги, дюпы, торговать предметами за реальные деньги или отправлять ложные жалобы.\n• Нельзя передавать аккаунты и привилегии.\n• Правила одинаковы для всех, включая игроков с донатом.\n\n<i>Полная актуальная редакция находится на сайте.</i>", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("📖 Открыть полные правила", `${links.site}/rules.html`)], [Markup.button.callback("← В меню", "home")]]) });
+  await ctx.reply("<b>📜 Правила Aura</b>\n\n• Уважай игроков: без оскорблений, флуда, капса и рекламы.\n• Читы, X-Ray, Baritone, боты и обход наказаний запрещены.\n• Нельзя использовать баги, дюпы, торговать предметами за реальные деньги или отправлять ложные жалобы.\n• Нельзя передавать аккаунты и привилегии.\n• Правила одинаковы для всех, включая игроков с донатом.\n\n<i>Полная актуальная редакция находится на сайте.</i>", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("📖 Открыть полные правила", `${links.site}/rules.html`)], [Markup.button.callback("← В меню", "home")]]) });
 });
 bot.action("applications", async (ctx) => {
   await safeAnswer(ctx);
-  await ctx.editMessageText("<b>📋 Заявки в команду Aura</b>\n\nЗаявки не заполняются в боте. Перейди на Discord-сервер Aura и выбери нужную форму:\n\n• Helper\n• Медиа-команда — YouTube или TikTok\n• Другие открытые роли\n\nТам же можно следить за статусом заявки.", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("Открыть Discord Aura", links.discord)], [Markup.button.callback("← В меню", "home")]]) });
+  await ctx.reply("<b>📋 Заявки в команду Aura</b>\n\nЗаявки не заполняются в боте. Перейди на Discord-сервер Aura и выбери нужную форму:\n\n• Helper\n• Медиа-команда — YouTube или TikTok\n• Другие открытые роли\n\nТам же можно следить за статусом заявки.", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("Открыть Discord Aura", links.discord)], [Markup.button.callback("← В меню", "home")]]) });
 });
 bot.action(/^category:(privilege|case|service)$/, (ctx) => showCategory(ctx, ctx.match[1] as ProductCategory));
 bot.action(/^product:(.+)$/, async (ctx) => { const product = productById(ctx.match[1]); if (product) await showProduct(ctx, product); else await safeAnswer(ctx, "Товар не найден"); });
