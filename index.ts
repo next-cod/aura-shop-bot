@@ -23,15 +23,21 @@ const staffChatId = Number(process.env.STAFF_CHAT_ID || 0) || undefined;
 const managerUsername = (process.env.MANAGER_USERNAME || "manager_mcaura").toLowerCase();
 const asset = (name: string) => join(process.cwd(), "assets", name);
 type Pending = { type: "ticket"; kind: TicketKind };
+type TelegramLinkPending = { type: "telegram-link"; nickname?: string };
 const pending = new Map<number, Pending>();
+const telegramLinkPending = new Map<number, TelegramLinkPending>();
 const linkedMinecraftAccounts = new Map<number, string>();
+const telegramBridge = process.env.AURA_TELEGRAM_API_URL || "http://213.171.18.146:22243";
+const telegramBridgeSecret = process.env.AURA_TELEGRAM_SECRET || "";
 
-const mainKeyboard = () => Markup.inlineKeyboard([
+const mainKeyboard = (telegramId?: number) => Markup.inlineKeyboard([
   [Markup.button.callback("🛒 Магазин AURA", "shop"), Markup.button.callback("🧭 Обращения", "help")],
   [Markup.button.callback("🎮 О сервере", "server"), Markup.button.callback("📜 Правила", "rules")],
   [Markup.button.callback("📋 Заявки в команду", "applications"), Markup.button.url("💬 Discord", links.discord)],
   [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Канал создателя", "https://t.me/next_auramc")],
-  [Markup.button.callback("🔗 Привязать аккаунт", "profile:link")]
+  [linkedMinecraftAccounts.has(telegramId || 0)
+    ? Markup.button.callback("🔓 Отвязать аккаунт", "profile:unlink")
+    : Markup.button.callback("🔗 Привязать аккаунт", "profile:link")]
 ]);
 const backKeyboard = () => Markup.inlineKeyboard([[Markup.button.callback("← В главное меню", "home")]]);
 const safeAnswer = (ctx: Context, text?: string) => ctx.answerCbQuery(text).catch(() => undefined);
@@ -42,7 +48,7 @@ const money = (value: number) => new Intl.NumberFormat("ru-RU").format(value) + 
 
 async function showHome(ctx: Context) {
   const text = "<b>🔴 AURA – ГРИФЕРСКИЙ СЕРВЕР</b>\n<i>🔥 Играй, сражайся, забирай своё.</i>\n\n🎮 <b>Для телефонов и компьютеров</b>\nВерсии: <b>1.16.5–26.2</b>\nРежим: <b>гриф-выживание</b>\n\n📢 Канал сервера: @aura_grief\n💬 Discord сервер: <a href=\"https://discord.gg/JP6jSt7DA\">discord.gg/JP6jSt7DA</a>\n👤 Канал создателя: @next_auramc\n\n<i>Выбирай раздел ниже – всё нужное в одном боте.</i>";
-  return ctx.replyWithPhoto(Input.fromLocalFile(asset("aura-home.png")), { caption: text, parse_mode: "HTML", ...withoutLinkPreview, ...mainKeyboard() });
+  return ctx.replyWithPhoto(Input.fromLocalFile(asset("aura-home.png")), { caption: text, parse_mode: "HTML", ...withoutLinkPreview, ...mainKeyboard(ctx.from?.id) });
 }
 
 async function showShop(ctx: Context) {
@@ -126,7 +132,8 @@ bot.action("profile", async (ctx) => {
 });
 bot.action("profile:link", async (ctx) => {
   await safeAnswer(ctx);
-  await ctx.reply("В Minecraft напиши <code>/link</code> и подтверди привязку в игре.", { parse_mode: "HTML" });
+  telegramLinkPending.set(ctx.from.id, { type: "telegram-link" });
+  await ctx.reply("<b>🔗 Привязка аккаунта AURA</b>\n\nОтправь свой игровой ник Minecraft.\n\n<i>Перед этим зайди на сервер AURA, напиши <code>/link</code> и выбери Telegram.</i>", { parse_mode: "HTML" });
 });
 bot.action("profile:unlink", async (ctx) => {
   linkedMinecraftAccounts.delete(ctx.from.id);
@@ -177,7 +184,23 @@ bot.command("cancel", async (ctx) => { pending.delete(ctx.from.id); await ctx.re
 
 bot.on("text", async (ctx) => {
   const state = pending.get(ctx.from.id);
-  if (!state || ctx.message.text.startsWith("/")) return;
+  if (ctx.message.text.startsWith("/")) return;
+  const linkState = telegramLinkPending.get(ctx.from.id);
+  if (linkState) {
+    const nickname = ctx.message.text.trim();
+    if (!/^[A-Za-z0-9_]{3,16}$/.test(nickname)) return ctx.reply("Ник Minecraft должен состоять из 3–16 латинских букв, цифр или символа _. Попробуй ещё раз.");
+    if (!telegramBridgeSecret) return ctx.reply("Привязка временно настраивается. Попробуй чуть позже.");
+    try {
+      const response = await fetch(`${telegramBridge}/telegram/link/request`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(ctx.from.id), nickname }) });
+      const result = await response.json() as { ok?: boolean; code?: string };
+      if (!result.ok) return ctx.reply(result.code === "open_link_in_game" ? "Сначала зайди в Minecraft, напиши <code>/link</code>, выбери Telegram и повтори попытку." : "Не удалось начать привязку. Проверь ник и попробуй ещё раз.", { parse_mode: "HTML" });
+      telegramLinkPending.set(ctx.from.id, { type: "telegram-link", nickname });
+      return ctx.reply(`<b>Запрос отправлен.</b>\n\nВ Minecraft на аккаунте <b>${nickname}</b> появится кнопка подтверждения. Нажми её — после этого бот сообщит об успешной привязке.`, { parse_mode: "HTML" });
+    } catch {
+      return ctx.reply("Сервер привязки пока недоступен. Попробуй чуть позже.");
+    }
+  }
+  if (!state) return;
   if (state.type === "ticket") {
     const text = ctx.message.text.trim();
     if (text.length < 15) return ctx.reply("Опиши обращение подробнее – хотя бы 15 символов.");
@@ -189,6 +212,25 @@ bot.on("text", async (ctx) => {
     return ctx.reply("<b>Готово – обращение отправлено команде AURA.</b>\nЕсли идею реализуют или баг подтвердится, с тобой свяжутся насчёт награды.", { parse_mode: "HTML", ...mainKeyboard() });
   }
 });
+
+async function pollTelegramLinkConfirmations() {
+  if (!telegramBridgeSecret) return;
+  for (const [telegramId, request] of telegramLinkPending) {
+    if (!request.nickname) continue;
+    try {
+      const statusResponse = await fetch(`${telegramBridge}/telegram/link/status`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(telegramId), nickname: request.nickname }) });
+      const status = await statusResponse.json() as { confirmed?: boolean };
+      if (!status.confirmed) continue;
+      const finishResponse = await fetch(`${telegramBridge}/telegram/link/finish`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(telegramId), nickname: request.nickname }) });
+      const finish = await finishResponse.json() as { ok?: boolean };
+      if (!finish.ok) continue;
+      linkedMinecraftAccounts.set(telegramId, request.nickname);
+      telegramLinkPending.delete(telegramId);
+      await bot.telegram.sendMessage(telegramId, `✅ <b>Аккаунт ${request.nickname} успешно привязан к Telegram.</b>\n\nТеперь в меню доступно управление безопасностью аккаунта.`, { parse_mode: "HTML", ...mainKeyboard(telegramId) });
+    } catch (error) { console.error("Telegram link status check failed", error); }
+  }
+}
+setInterval(() => void pollTelegramLinkConfirmations(), 2_500);
 
 bot.catch((error) => console.error("Bot error", error));
 async function launchWithRetry() {
