@@ -153,7 +153,20 @@ bot.on("text", async (ctx) => {
 });
 
 bot.catch((error) => console.error("Bot error", error));
-bot.launch().then(() => console.log("Aura bot is running"));
+async function launchWithRetry() {
+  for (;;) {
+    try {
+      await bot.launch();
+      console.log("Aura bot is running");
+      return;
+    } catch (error) {
+      // A second old process or a short Telegram outage must not terminate the app.
+      console.error("Unable to start Aura bot; retrying in 5 seconds", error);
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+}
+void launchWithRetry();
 
 // Amvera checks that an application keeps its assigned HTTP port open.
 // The bot itself uses Telegram long polling; this endpoint only reports liveness.
