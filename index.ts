@@ -18,8 +18,7 @@ const links = {
 const staffChatId = Number(process.env.STAFF_CHAT_ID || 0) || undefined;
 const managerUsername = (process.env.MANAGER_USERNAME || "manager_mcaura").toLowerCase();
 const asset = (name: string) => join(process.cwd(), "assets", name);
-type Purchase = Pick<Product, "id" | "category" | "title" | "price" | "emoji" | "description" | "perks"> & { auraAmount?: number };
-type Pending = { type: "ticket"; kind: TicketKind } | { type: "nick"; purchase: Purchase } | { type: "auraAmount" };
+type Pending = { type: "ticket"; kind: TicketKind } | { type: "auraAmount" };
 const pending = new Map<number, Pending>();
 
 const mainKeyboard = () => Markup.inlineKeyboard([
@@ -88,6 +87,9 @@ async function sendStaff(text: string) {
   if (!recipient) return;
   await bot.telegram.sendMessage(recipient, text, { parse_mode: "HTML" }).catch((error) => console.error("Unable to send staff notification", error));
 }
+async function showManualPurchase(ctx: Context, title: string) {
+  await ctx.reply(`<b>🛒 Покупка: ${title}</b>\n\nНапиши менеджеру <b>@manager_mcaura</b> и укажи:\n\n• свой игровой ник\n• товар, который хочешь купить\n\n<i>Менеджер ответит и поможет оформить покупку.</i>`, { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("💬 Написать менеджеру", "https://t.me/manager_mcaura")], [Markup.button.callback("← В меню", "home")]]) });
+}
 
 bot.start((ctx) => showHome(ctx));
 bot.command("menu", (ctx) => showHome(ctx));
@@ -132,9 +134,8 @@ bot.action(/^ticket:(idea|bug|report)$/, async (ctx) => {
 bot.action(/^buy:(.+)$/, async (ctx) => {
   const product = productById(ctx.match[1]);
   if (!product) return safeAnswer(ctx, "Товар не найден");
-  pending.set(ctx.from.id, { type: "nick", purchase: product });
   await safeAnswer(ctx);
-  await ctx.reply(`<b>Покупка: ${product.title}</b>\n\nНапиши свой игровой ник (латинские буквы, цифры и _). Товар будет выдан именно на этот аккаунт.`, { parse_mode: "HTML", ...backKeyboard() });
+  await showManualPurchase(ctx, product.title);
 });
 bot.command("cancel", async (ctx) => { pending.delete(ctx.from.id); await ctx.reply("Действие отменено.", mainKeyboard()); });
 
@@ -156,16 +157,10 @@ bot.on("text", async (ctx) => {
     if (!Number.isInteger(requested) || requested < 8 || requested > 7500) return ctx.reply("Введи целое число от 8 до 7 500 — столько Ауры будет зачислено на игровой аккаунт.");
     const rubles = Math.max(5, Math.min(5000, Math.ceil(requested / 7.5) * 5));
     const credited = Math.round(rubles * 1.5);
-    const purchase: Purchase = { id: `aura-${credited}-${rubles}`, category: "case", title: `${credited} Ауры`, price: rubles, emoji: "🔴", description: "Донатная валюта Aura", perks: ["Курс акции: 1 ₽ = 1,5 Ауры", `Будет зачислено: ${credited} Ауры`], auraAmount: credited };
-    pending.set(ctx.from.id, { type: "nick", purchase });
-    return ctx.reply(`<b>🔴 К зачислению: ${credited} Ауры</b>\nСтоимость: <b>${money(rubles)}</b>\n\nТеперь напиши игровой ник (латинские буквы, цифры и _).`, { parse_mode: "HTML", ...backKeyboard() });
+    pending.delete(ctx.from.id);
+    await ctx.reply(`<b>🔴 Выбрано: ${credited} Ауры</b>\nСтоимость по акции: <b>${money(rubles)}</b>`, { parse_mode: "HTML" });
+    return showManualPurchase(ctx, `${credited} Ауры`);
   }
-  const nick = ctx.message.text.trim();
-  if (!/^[a-zA-Z0-9_]{3,16}$/.test(nick)) return ctx.reply("Ник должен быть от 3 до 16 символов: латинские буквы, цифры и _. Попробуй ещё раз.");
-  const product = state.purchase;
-  pending.delete(ctx.from.id);
-  const request = `Ник: ${nick}\nТовар: ${product.title}`;
-  await ctx.reply(`<b>🛒 Заявка подготовлена</b>\n\nОтправь менеджеру <b>@manager_mcaura</b> это сообщение:\n\n<code>${request}</code>\n\nМенеджер пришлёт реквизиты для оплаты. После оплаты и проверки он выдаст товар на ник <code>${nick}</code>.`, { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("💬 Написать менеджеру", "https://t.me/manager_mcaura")], [Markup.button.callback("← В меню", "home")]]) });
 });
 
 bot.catch((error) => console.error("Bot error", error));
