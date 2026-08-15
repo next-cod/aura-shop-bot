@@ -5,7 +5,15 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { Telegraf, Markup, Input, type Context } from "telegraf";
 import { productById, productsBy, type Product, type ProductCategory } from "./catalog.js";
-import { getManagerChatId, saveTicket, setManagerChatId, type TicketKind } from "./store.js";
+import {
+  getManagerChatId,
+  getPendingTelegramLinks,
+  removePendingTelegramLink,
+  savePendingTelegramLink,
+  saveTicket,
+  setManagerChatId,
+  type TicketKind
+} from "./store.js";
 
 // Some cloud networks publish an unreachable IPv6 route for Telegram. Prefer
 // IPv4 so polling starts reliably after every deployment.
@@ -275,6 +283,7 @@ bot.on("text", async (ctx) => {
       const result = await response.json() as { ok?: boolean; code?: string };
       if (!result.ok) return ctx.reply(result.code === "open_link_in_game" ? "Сначала зайди в Minecraft, напиши <code>/link</code>, выбери Telegram и повтори попытку." : "Не удалось начать привязку. Проверь ник и попробуй ещё раз.", { parse_mode: "HTML" });
       telegramLinkPending.set(ctx.from.id, { type: "telegram-link", nickname });
+      await savePendingTelegramLink(ctx.from.id, nickname);
       return ctx.reply(`<b>Запрос отправлен.</b>\n\nВ Minecraft на аккаунте <b>${nickname}</b> появится кнопка подтверждения. Нажми её — после этого бот сообщит об успешной привязке.`, { parse_mode: "HTML" });
     } catch {
       return ctx.reply("Сервер привязки пока недоступен. Попробуй чуть позже.");
@@ -294,6 +303,37 @@ bot.on("text", async (ctx) => {
 });
 
 let pollingTelegramLinks = false;
+async function restorePendingTelegramLinks() {
+  for (const request of await getPendingTelegramLinks()) {
+    telegramLinkPending.set(request.telegramId, { type: "telegram-link", nickname: request.nickname });
+  }
+}
+
+async function isTelegramAccountLinked(telegramId: number, nickname: string) {
+  const account = await telegramApi("/telegram/account/status", { telegramId: String(telegramId) });
+  return account.linked === true
+    && typeof account.nickname === "string"
+    && account.nickname.toLowerCase() === nickname.toLowerCase();
+}
+
+async function notifyTelegramLinkSuccess(telegramId: number, nickname: string) {
+  linkedMinecraftAccounts.set(telegramId, nickname);
+  telegramTwoFactorEnabled.set(telegramId, true);
+  await bot.telegram.sendMessage(
+    telegramId,
+    `✅ <b>Привязка завершена!</b>\n\nMinecraft-аккаунт <b>${nickname}</b> успешно привязан к Telegram. Теперь управление аккаунтом доступно в разделе «Профиль».`,
+    {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("👤 Открыть профиль", "profile")],
+        [Markup.button.callback("← В главное меню", "home")]
+      ])
+    }
+  );
+  telegramLinkPending.delete(telegramId);
+  await removePendingTelegramLink(telegramId);
+}
+
 async function pollTelegramLinkConfirmations() {
   if (!telegramBridgeSecret || pollingTelegramLinks) return;
   pollingTelegramLinks = true;
@@ -301,22 +341,24 @@ async function pollTelegramLinkConfirmations() {
     for (const [telegramId, request] of telegramLinkPending) {
       if (!request.nickname) continue;
       try {
+        if (await isTelegramAccountLinked(telegramId, request.nickname)) {
+          await notifyTelegramLinkSuccess(telegramId, request.nickname);
+          continue;
+        }
         const statusResponse = await fetch(`${telegramBridge}/telegram/link/status`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(telegramId), nickname: request.nickname }) });
         const status = await statusResponse.json() as { confirmed?: boolean };
         if (!status.confirmed) continue;
         const finishResponse = await fetch(`${telegramBridge}/telegram/link/finish`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(telegramId), nickname: request.nickname }) });
         const finish = await finishResponse.json() as { ok?: boolean };
-        if (!finish.ok) continue;
-        linkedMinecraftAccounts.set(telegramId, request.nickname);
-        telegramTwoFactorEnabled.set(telegramId, true);
-        telegramLinkPending.delete(telegramId);
-        await bot.telegram.sendMessage(telegramId, `✅ <b>Аккаунт ${request.nickname} успешно привязан к Telegram.</b>\n\nТеперь в меню доступно управление безопасностью аккаунта.`, { parse_mode: "HTML", ...mainKeyboard(telegramId) });
+        if (!finish.ok && !(await isTelegramAccountLinked(telegramId, request.nickname))) continue;
+        await notifyTelegramLinkSuccess(telegramId, request.nickname);
       } catch (error) { console.error("Telegram link status check failed", error); }
     }
   } finally {
     pollingTelegramLinks = false;
   }
 }
+await restorePendingTelegramLinks();
 setInterval(() => void pollTelegramLinkConfirmations(), 2_500);
 
 let pollingTelegramLogins = false;

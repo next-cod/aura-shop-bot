@@ -22,7 +22,17 @@ export type Order = {
   paidAt?: string;
   user: { id: number; username?: string; name: string };
 };
-type Database = { tickets: Ticket[]; orders: Order[]; managerChatId?: number };
+export type PendingTelegramLink = {
+  telegramId: number;
+  nickname: string;
+  requestedAt: string;
+};
+type Database = {
+  tickets: Ticket[];
+  orders: Order[];
+  managerChatId?: number;
+  pendingTelegramLinks?: Record<string, Omit<PendingTelegramLink, "telegramId">>;
+};
 
 // Amvera mounts durable storage at /data. Local development stays self-contained.
 const dataDir = process.env.DATA_DIR || (process.platform === "linux" ? "/data" : join(process.cwd(), "data"));
@@ -47,3 +57,21 @@ export async function saveOrder(order: Order) { await mutate((db) => db.orders.p
 export async function markOrderPaid(id: string) { await mutate((db) => { const order = db.orders.find((item) => item.id === id); if (order) order.paidAt = new Date().toISOString(); }); }
 export async function setManagerChatId(chatId: number) { await mutate((db) => { db.managerChatId = chatId; }); }
 export async function getManagerChatId() { return (await readDb()).managerChatId; }
+export async function savePendingTelegramLink(telegramId: number, nickname: string) {
+  await mutate((db) => {
+    db.pendingTelegramLinks ||= {};
+    db.pendingTelegramLinks[String(telegramId)] = { nickname, requestedAt: new Date().toISOString() };
+  });
+}
+export async function removePendingTelegramLink(telegramId: number) {
+  await mutate((db) => { delete db.pendingTelegramLinks?.[String(telegramId)]; });
+}
+export async function getPendingTelegramLinks(): Promise<PendingTelegramLink[]> {
+  const links = (await readDb()).pendingTelegramLinks || {};
+  return Object.entries(links).flatMap(([telegramId, value]) => {
+    const id = Number(telegramId);
+    return Number.isSafeInteger(id) && id > 0 && value?.nickname
+      ? [{ telegramId: id, nickname: value.nickname, requestedAt: value.requestedAt }]
+      : [];
+  });
+}
