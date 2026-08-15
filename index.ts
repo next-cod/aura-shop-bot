@@ -28,6 +28,8 @@ type TelegramLinkPending = { type: "telegram-link"; nickname?: string };
 const pending = new Map<number, Pending>();
 const telegramLinkPending = new Map<number, TelegramLinkPending>();
 const linkedMinecraftAccounts = new Map<number, string>();
+const telegramTwoFactorEnabled = new Map<number, boolean>();
+const shownTelegramLoginRequests = new Set<number>();
 const telegramBridge = process.env.AURA_TELEGRAM_API_URL || "http://213.171.18.146:22243";
 // Telegram uses the already configured server bridge secret until it receives
 // its own separate variable. This keeps both official bots on the same trusted bridge.
@@ -39,7 +41,7 @@ const mainKeyboard = (telegramId?: number) => Markup.inlineKeyboard([
   [Markup.button.callback("📋 Заявки в команду", "applications"), Markup.button.url("💬 Discord", links.discord)],
   [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Канал создателя", "https://t.me/next_auramc")],
   [linkedMinecraftAccounts.has(telegramId || 0)
-    ? Markup.button.callback("🔓 Отвязать аккаунт", "profile:unlink")
+    ? Markup.button.callback("👤 Профиль", "profile")
     : Markup.button.callback("🔗 Привязать аккаунт", "profile:link")]
 ]);
 const backKeyboard = () => Markup.inlineKeyboard([[Markup.button.callback("← В главное меню", "home")]]);
@@ -62,11 +64,46 @@ async function telegramApi(path: string, data: Record<string, string>) {
 async function refreshTelegramLink(telegramId: number) {
   try {
     const status = await telegramApi("/telegram/account/status", { telegramId: String(telegramId) });
-    if (status.linked === true && typeof status.nickname === "string") linkedMinecraftAccounts.set(telegramId, status.nickname);
-    else linkedMinecraftAccounts.delete(telegramId);
+    if (status.linked === true && typeof status.nickname === "string") {
+      linkedMinecraftAccounts.set(telegramId, status.nickname);
+      telegramTwoFactorEnabled.set(telegramId, status.twoFactorEnabled !== false);
+    } else {
+      linkedMinecraftAccounts.delete(telegramId);
+      telegramTwoFactorEnabled.delete(telegramId);
+    }
   } catch {
     linkedMinecraftAccounts.delete(telegramId);
+    telegramTwoFactorEnabled.delete(telegramId);
   }
+}
+
+async function showProfile(ctx: Context, answerCallback = false) {
+  if (answerCallback) await safeAnswer(ctx);
+  if (!ctx.from?.id) return;
+  await refreshTelegramLink(ctx.from.id);
+  const nickname = linkedMinecraftAccounts.get(ctx.from.id);
+  if (!nickname) {
+    return ctx.reply("<b>👤 Профиль AURA</b>\n\nИгровой аккаунт пока не привязан.", {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("🔗 Привязать аккаунт", "profile:link")],
+        [Markup.button.callback("← В меню", "home")]
+      ])
+    });
+  }
+  const twoFactorEnabled = telegramTwoFactorEnabled.get(ctx.from.id) !== false;
+  const twoFactorButton = twoFactorEnabled
+    ? Markup.button.callback("🛡 Отключить 2FA", "profile:2fa-off")
+    : Markup.button.callback("🛡 Включить 2FA", "profile:2fa-on");
+  return ctx.reply(
+    `<b>👤 Профиль AURA</b>\n\nИгровой аккаунт: <b>${nickname}</b>\nДвухфакторная защита: ${twoFactorEnabled ? "<b>включена</b> ✅" : "<b>отключена</b> ❌"}`,
+    { parse_mode: "HTML", ...Markup.inlineKeyboard([
+      [Markup.button.callback("🚪 Кикнуть", "profile:kick"), Markup.button.callback("🔑 Восстановить пароль", "profile:reset")],
+      [twoFactorButton],
+      [Markup.button.callback("🔓 Отвязать аккаунт", "profile:unlink")],
+      [Markup.button.callback("← В меню", "home")]
+    ]) }
+  );
 }
 
 async function showHome(ctx: Context) {
@@ -138,22 +175,7 @@ bot.action("home", async (ctx) => { pending.delete(ctx.from.id); await safeAnswe
 bot.action("shop", showShop);
 bot.action("help", showHelp);
 bot.action("profile", async (ctx) => {
-  await safeAnswer(ctx);
-  await refreshTelegramLink(ctx.from.id);
-  const nickname = linkedMinecraftAccounts.get(ctx.from.id);
-  const accountButton = nickname
-    ? Markup.button.callback("🔓 Отвязать аккаунт", "profile:unlink")
-    : Markup.button.callback("🔗 Привязать аккаунт", "profile:link");
-  const caption = nickname
-    ? `<b>🔐 Профиль AURA</b>\n\nИгровой аккаунт: <b>${nickname}</b>`
-    : "<b>🔐 Профиль AURA</b>\n\nИгровой аккаунт пока не привязан.";
-  await ctx.reply(caption, { parse_mode: "HTML", ...Markup.inlineKeyboard([
-    [Markup.button.callback("🚪 Кикнуть аккаунт", "profile:kick")],
-    [Markup.button.callback("🔑 Восстановить пароль", "profile:reset")],
-    [Markup.button.callback("🛡 Отключить двухэтапную авторизацию", "profile:2fa-off")],
-    [accountButton],
-    [Markup.button.callback("← В меню", "home")]
-  ]) });
+  await showProfile(ctx, true);
 });
 bot.action("profile:link", async (ctx) => {
   await safeAnswer(ctx);
@@ -164,17 +186,44 @@ bot.action("profile:unlink", async (ctx) => {
   const result = await telegramApi("/telegram/action", { telegramId: String(ctx.from.id), action: "unlink" });
   if (result.ok !== true) return safeAnswer(ctx, "Аккаунт ещё не привязан");
   linkedMinecraftAccounts.delete(ctx.from.id);
+  telegramTwoFactorEnabled.delete(ctx.from.id);
   await safeAnswer(ctx, "Аккаунт отвязан");
-  await ctx.reply("Игровой аккаунт отвязан от Telegram.", mainKeyboard(ctx.from.id));
+  await ctx.reply("✅ Игровой аккаунт отвязан от Telegram.", mainKeyboard(ctx.from.id));
 });
-bot.action(/^(profile:kick|profile:reset|profile:2fa-off)$/, async (ctx) => {
-  const actions: Record<string, string> = { "profile:kick": "kick", "profile:reset": "reset_password", "profile:2fa-off": "two_factor_off" };
+bot.action(/^(profile:kick|profile:reset|profile:2fa-off|profile:2fa-on)$/, async (ctx) => {
+  const actions: Record<string, string> = {
+    "profile:kick": "kick",
+    "profile:reset": "reset_password",
+    "profile:2fa-off": "two_factor_off",
+    "profile:2fa-on": "two_factor_on"
+  };
   const result = await telegramApi("/telegram/action", { telegramId: String(ctx.from.id), action: actions[ctx.match[1]] });
   if (result.ok !== true) return safeAnswer(ctx, "Сначала привяжи аккаунт");
   await safeAnswer(ctx, "Готово");
-  if (ctx.match[1] === "profile:reset") return ctx.reply(`Новый пароль: <code>${String(result.password || "")}</code>\nСохрани его: старый пароль больше не действует.`, { parse_mode: "HTML" });
-  if (ctx.match[1] === "profile:2fa-off") return ctx.reply("Двухэтапная авторизация отключена.");
-  await ctx.reply("Аккаунт отключён от сервера.");
+  const profileBack = Markup.inlineKeyboard([[Markup.button.callback("← Вернуться в профиль", "profile")]]);
+  if (ctx.match[1] === "profile:reset") {
+    return ctx.reply(`🔑 <b>Пароль восстановлен.</b>\n\nНовый пароль: <code>${String(result.password || "")}</code>\n\nСохрани его. Старый пароль больше не работает.`, { parse_mode: "HTML", ...profileBack });
+  }
+  if (ctx.match[1] === "profile:2fa-off") {
+    telegramTwoFactorEnabled.set(ctx.from.id, false);
+    return ctx.reply("🛡 Двухфакторная авторизация отключена. Подтверждение входа через Telegram больше запрашиваться не будет.", profileBack);
+  }
+  if (ctx.match[1] === "profile:2fa-on") {
+    telegramTwoFactorEnabled.set(ctx.from.id, true);
+    return ctx.reply("🛡 Двухфакторная авторизация включена. После длительного отсутствия вход потребуется подтвердить через Telegram.", profileBack);
+  }
+  await ctx.reply("🚪 Команда выполнена: игровой аккаунт отключён от сервера.", profileBack);
+});
+bot.action(/^(login:approve|login:deny)$/, async (ctx) => {
+  const allow = ctx.match[1] === "login:approve";
+  const result = await telegramApi("/telegram/login/answer", {
+    telegramId: String(ctx.from.id),
+    allow: String(allow)
+  });
+  shownTelegramLoginRequests.delete(ctx.from.id);
+  if (result.ok !== true) return safeAnswer(ctx, "Запрос уже истёк");
+  await safeAnswer(ctx, allow ? "Вход подтверждён" : "Вход отклонён");
+  await ctx.reply(allow ? "✅ Вход в аккаунт AURA подтверждён." : "⛔ Вход отклонён. Игрок отключён от сервера.");
 });
 bot.action("server", async (ctx) => {
   await safeAnswer(ctx);
@@ -244,24 +293,67 @@ bot.on("text", async (ctx) => {
   }
 });
 
+let pollingTelegramLinks = false;
 async function pollTelegramLinkConfirmations() {
-  if (!telegramBridgeSecret) return;
-  for (const [telegramId, request] of telegramLinkPending) {
-    if (!request.nickname) continue;
-    try {
-      const statusResponse = await fetch(`${telegramBridge}/telegram/link/status`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(telegramId), nickname: request.nickname }) });
-      const status = await statusResponse.json() as { confirmed?: boolean };
-      if (!status.confirmed) continue;
-      const finishResponse = await fetch(`${telegramBridge}/telegram/link/finish`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(telegramId), nickname: request.nickname }) });
-      const finish = await finishResponse.json() as { ok?: boolean };
-      if (!finish.ok) continue;
-      linkedMinecraftAccounts.set(telegramId, request.nickname);
-      telegramLinkPending.delete(telegramId);
-      await bot.telegram.sendMessage(telegramId, `✅ <b>Аккаунт ${request.nickname} успешно привязан к Telegram.</b>\n\nТеперь в меню доступно управление безопасностью аккаунта.`, { parse_mode: "HTML", ...mainKeyboard(telegramId) });
-    } catch (error) { console.error("Telegram link status check failed", error); }
+  if (!telegramBridgeSecret || pollingTelegramLinks) return;
+  pollingTelegramLinks = true;
+  try {
+    for (const [telegramId, request] of telegramLinkPending) {
+      if (!request.nickname) continue;
+      try {
+        const statusResponse = await fetch(`${telegramBridge}/telegram/link/status`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(telegramId), nickname: request.nickname }) });
+        const status = await statusResponse.json() as { confirmed?: boolean };
+        if (!status.confirmed) continue;
+        const finishResponse = await fetch(`${telegramBridge}/telegram/link/finish`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(telegramId), nickname: request.nickname }) });
+        const finish = await finishResponse.json() as { ok?: boolean };
+        if (!finish.ok) continue;
+        linkedMinecraftAccounts.set(telegramId, request.nickname);
+        telegramTwoFactorEnabled.set(telegramId, true);
+        telegramLinkPending.delete(telegramId);
+        await bot.telegram.sendMessage(telegramId, `✅ <b>Аккаунт ${request.nickname} успешно привязан к Telegram.</b>\n\nТеперь в меню доступно управление безопасностью аккаунта.`, { parse_mode: "HTML", ...mainKeyboard(telegramId) });
+      } catch (error) { console.error("Telegram link status check failed", error); }
+    }
+  } finally {
+    pollingTelegramLinks = false;
   }
 }
 setInterval(() => void pollTelegramLinkConfirmations(), 2_500);
+
+let pollingTelegramLogins = false;
+async function pollTelegramLoginRequests() {
+  if (!telegramBridgeSecret || pollingTelegramLogins) return;
+  pollingTelegramLogins = true;
+  try {
+    const result = await telegramApi("/telegram/login/pending", {});
+    const requests = Array.isArray(result.requests) ? result.requests : [];
+    const activeIds = new Set<number>();
+    for (const item of requests) {
+      if (!item || typeof item !== "object") continue;
+      const telegramId = Number((item as Record<string, unknown>).telegramId);
+      const nickname = String((item as Record<string, unknown>).nickname || "");
+      if (!Number.isSafeInteger(telegramId) || telegramId <= 0 || !nickname) continue;
+      activeIds.add(telegramId);
+      if (shownTelegramLoginRequests.has(telegramId)) continue;
+      shownTelegramLoginRequests.add(telegramId);
+      await bot.telegram.sendMessage(telegramId,
+        `🔐 <b>Подтвердите вход в AURA</b>\n\nАккаунт: <b>${nickname}</b>\n\nЕсли это не вы, отклоните вход.`, {
+          parse_mode: "HTML",
+          ...Markup.inlineKeyboard([[
+            Markup.button.callback("✅ Подтвердить", "login:approve"),
+            Markup.button.callback("⛔ Отклонить", "login:deny")
+          ]])
+        });
+    }
+    for (const telegramId of shownTelegramLoginRequests) {
+      if (!activeIds.has(telegramId)) shownTelegramLoginRequests.delete(telegramId);
+    }
+  } catch (error) {
+    console.error("Telegram login request check failed", error);
+  } finally {
+    pollingTelegramLogins = false;
+  }
+}
+setInterval(() => void pollTelegramLoginRequests(), 2_500);
 
 bot.catch((error) => console.error("Bot error", error));
 async function launchWithRetry() {
