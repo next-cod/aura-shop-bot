@@ -37,11 +37,38 @@ const pending = new Map<number, Pending>();
 const telegramLinkPending = new Map<number, TelegramLinkPending>();
 const linkedMinecraftAccounts = new Map<number, string>();
 const telegramTwoFactorEnabled = new Map<number, boolean>();
-const shownTelegramLoginRequests = new Set<number>();
+const shownTelegramLoginRequests = new Map<number, string>();
 const telegramBridge = process.env.AURA_TELEGRAM_API_URL || "http://213.171.18.146:22243";
 // Telegram uses the already configured server bridge secret until it receives
 // its own separate variable. This keeps both official bots on the same trusted bridge.
 const telegramBridgeSecret = process.env.AURA_TELEGRAM_SECRET || process.env.AURA_VK_SECRET || process.env.AURA_SHARED_SECRET || "";
+
+type TelegramLoginRequest = {
+  telegramId: number;
+  requestId: string;
+  nickname: string;
+  ip: string;
+  requestedAt: number;
+};
+type TelegramAccountEvent = {
+  id: string;
+  telegramId: number;
+  nickname: string;
+  type: "logout";
+  ip: string;
+  createdAt: number;
+};
+
+const html = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+const dateTime = (timestamp: number) => new Intl.DateTimeFormat("ru-RU", {
+  timeZone: "Europe/Moscow",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit"
+}).format(new Date(timestamp)) + " МСК";
 
 const mainKeyboard = (telegramId?: number) => Markup.inlineKeyboard([
   [Markup.button.callback("🛒 Магазин AURA", "shop"), Markup.button.callback("🧭 Обращения", "help")],
@@ -64,9 +91,15 @@ async function telegramApi(path: string, data: Record<string, string>) {
   const response = await fetch(`${telegramBridge}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret },
-    body: JSON.stringify(data)
+    body: JSON.stringify(data),
+    signal: AbortSignal.timeout(8_000)
   });
-  return await response.json() as Record<string, unknown>;
+  const body = await response.text();
+  try {
+    return JSON.parse(body) as Record<string, unknown>;
+  } catch {
+    return { ok: false, code: `http_${response.status}` } as Record<string, unknown>;
+  }
 }
 
 async function refreshTelegramLink(telegramId: number) {
@@ -222,16 +255,24 @@ bot.action(/^(profile:kick|profile:reset|profile:2fa-off|profile:2fa-on)$/, asyn
   }
   await ctx.reply("🚪 Команда выполнена: игровой аккаунт отключён от сервера.", profileBack);
 });
-bot.action(/^(login:approve|login:deny)$/, async (ctx) => {
-  const allow = ctx.match[1] === "login:approve";
-  const result = await telegramApi("/telegram/login/answer", {
+bot.action(/^login:(approve|allow|deny)(?::([0-9a-f-]{36}))?$/, async (ctx) => {
+  const allow = ctx.match[1] !== "deny";
+  const requestId = ctx.match[2];
+  const answer: Record<string, string> = {
     telegramId: String(ctx.from.id),
     allow: String(allow)
-  });
+  };
+  if (requestId) answer.requestId = requestId;
+  const result = await telegramApi("/telegram/login/answer", answer);
   shownTelegramLoginRequests.delete(ctx.from.id);
   if (result.ok !== true) return safeAnswer(ctx, "Запрос уже истёк");
   await safeAnswer(ctx, allow ? "Вход подтверждён" : "Вход отклонён");
-  await ctx.reply(allow ? "✅ Вход в аккаунт AURA подтверждён." : "⛔ Вход отклонён. Игрок отключён от сервера.");
+  await ctx.editMessageText(
+    allow
+      ? `<b>✅ Вход в аккаунт Aura подтверждён</b>\n\nВремя: <code>${dateTime(Date.now())}</code>\nИгрок допущен на сервер.`
+      : `<b>❌ Вход в аккаунт Aura отклонён</b>\n\nВремя: <code>${dateTime(Date.now())}</code>\nПодключение к серверу отменено.`,
+    { parse_mode: "HTML" }
+  ).catch(() => undefined);
 });
 bot.action("server", async (ctx) => {
   await safeAnswer(ctx);
@@ -367,30 +408,55 @@ async function pollTelegramLoginRequests() {
   pollingTelegramLogins = true;
   try {
     const result = await telegramApi("/telegram/login/pending", {});
-    const requests = Array.isArray(result.requests) ? result.requests : [];
+    const requests = (Array.isArray(result.requests) ? result.requests : []) as TelegramLoginRequest[];
     const activeIds = new Set<number>();
     for (const item of requests) {
       if (!item || typeof item !== "object") continue;
-      const telegramId = Number((item as Record<string, unknown>).telegramId);
-      const nickname = String((item as Record<string, unknown>).nickname || "");
+      const telegramId = Number(item.telegramId);
+      const requestId = String(item.requestId || `legacy-${telegramId}`);
+      const nickname = String(item.nickname || "");
+      const ip = String(item.ip || "неизвестен");
+      const requestedAt = Number(item.requestedAt) || Date.now();
       if (!Number.isSafeInteger(telegramId) || telegramId <= 0 || !nickname) continue;
       activeIds.add(telegramId);
-      if (shownTelegramLoginRequests.has(telegramId)) continue;
-      shownTelegramLoginRequests.add(telegramId);
+      if (shownTelegramLoginRequests.get(telegramId) === requestId) continue;
+      const allowAction = requestId.startsWith("legacy-") ? "login:allow" : `login:allow:${requestId}`;
+      const denyAction = requestId.startsWith("legacy-") ? "login:deny" : `login:deny:${requestId}`;
       await bot.telegram.sendMessage(telegramId,
-        `🔐 <b>Подтвердите вход в AURA</b>\n\nАккаунт: <b>${nickname}</b>\n\nЕсли это не вы, отклоните вход.`, {
+        `<b>🔐 Вход в аккаунт Aura</b>\n\n` +
+        `Игрок: <code>${html(nickname)}</code>\n` +
+        `IP-адрес: <code>${html(ip)}</code>\n` +
+        `Время: <code>${dateTime(requestedAt)}</code>\n\n` +
+        `Подтвердите вход, только если это вы. Если запрос вам незнаком, отклоните его.`, {
           parse_mode: "HTML",
           ...Markup.inlineKeyboard([[
-            Markup.button.callback("✅ Подтвердить", "login:approve"),
-            Markup.button.callback("⛔ Отклонить", "login:deny")
+            Markup.button.callback("✅ Подтвердить", allowAction),
+            Markup.button.callback("❌ Отклонить", denyAction)
           ]])
         });
+      shownTelegramLoginRequests.set(telegramId, requestId);
     }
-    for (const telegramId of shownTelegramLoginRequests) {
+    for (const telegramId of shownTelegramLoginRequests.keys()) {
       if (!activeIds.has(telegramId)) shownTelegramLoginRequests.delete(telegramId);
     }
+
+    const eventResult = await telegramApi("/telegram/events/pending", {});
+    const events = (Array.isArray(eventResult.events) ? eventResult.events : []) as TelegramAccountEvent[];
+    for (const event of events) {
+      if (event.type === "logout") {
+        await bot.telegram.sendMessage(
+          event.telegramId,
+          `<b>🚪 Вы вышли с сервера Aura</b>\n\n` +
+          `Аккаунт: <code>${html(event.nickname)}</code>\n` +
+          `Время выхода: <code>${dateTime(event.createdAt)}</code>\n\n` +
+          `Игровая сессия завершена.`,
+          { parse_mode: "HTML" }
+        );
+      }
+      await telegramApi("/telegram/events/ack", { eventId: event.id });
+    }
   } catch (error) {
-    console.error("Telegram login request check failed", error);
+    console.error("Telegram account event check failed", error);
   } finally {
     pollingTelegramLogins = false;
   }
