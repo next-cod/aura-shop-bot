@@ -9,6 +9,7 @@ import {
   getManagerChatId,
   getPendingTelegramLinks,
   removePendingTelegramLink,
+  saveOrder,
   savePendingTelegramLink,
   saveTicket,
   setManagerChatId,
@@ -31,17 +32,24 @@ const links = {
 const staffChatId = Number(process.env.STAFF_CHAT_ID || 0) || undefined;
 const managerUsername = (process.env.MANAGER_USERNAME || "manager_mcaura").toLowerCase();
 const asset = (name: string) => join(process.cwd(), "assets", name);
-type Pending = { type: "ticket"; kind: TicketKind };
+type Pending =
+  | { type: "ticket"; kind: TicketKind }
+  | { type: "order"; productId: string; periodId?: "30" | "90" | "forever" }
+  | { type: "aura-amount" }
+  | { type: "aura-nick"; amountRub: number };
 type TelegramLinkPending = { type: "telegram-link"; nickname?: string };
 const pending = new Map<number, Pending>();
 const telegramLinkPending = new Map<number, TelegramLinkPending>();
 const linkedMinecraftAccounts = new Map<number, string>();
 const telegramTwoFactorEnabled = new Map<number, boolean>();
+type DonationInfo = { title?: string; expiresAt?: string; remainingDays?: number; permanent?: boolean };
+const telegramDonationInfo = new Map<number, DonationInfo>();
 const shownTelegramLoginRequests = new Map<number, string>();
-const telegramBridge = process.env.AURA_TELEGRAM_API_URL || "http://213.171.18.146:22243";
-// Telegram uses the already configured server bridge secret until it receives
-// its own separate variable. This keeps both official bots on the same trusted bridge.
-const telegramBridgeSecret = process.env.AURA_TELEGRAM_SECRET || process.env.AURA_VK_SECRET || process.env.AURA_SHARED_SECRET || "";
+// The current Minecraft bridge is configured explicitly. Do not silently fall
+// back to an old host or reuse credentials from another integration.
+const telegramBridge = process.env.AURA_TELEGRAM_API_URL;
+const telegramBridgeSecret = process.env.AURA_TELEGRAM_SECRET || "";
+const telegramBridgeReady = Boolean(telegramBridge && telegramBridgeSecret);
 
 type TelegramLoginRequest = {
   telegramId: number;
@@ -85,9 +93,32 @@ const withoutLinkPreview = { link_preview_options: { is_disabled: true } };
 const displayName = (ctx: Context) => [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ") || "Игрок";
 const userData = (ctx: Context) => ({ id: ctx.from!.id, username: ctx.from?.username, name: displayName(ctx) });
 const money = (value: number) => new Intl.NumberFormat("ru-RU").format(value) + " ₽";
+const escapeHtml = (value: string) => value.replace(/[&<>\"]/g, (symbol) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[symbol] || symbol));
+
+function donationInfoFromStatus(status: Record<string, unknown>): DonationInfo {
+  const title = [status.donationTitle, status.donationName, status.rank, status.group]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const expiresAt = typeof status.donationExpiresAt === "string" ? status.donationExpiresAt : undefined;
+  const remainingDays = typeof status.donationRemainingDays === "number" && Number.isFinite(status.donationRemainingDays)
+    ? Math.max(0, Math.ceil(status.donationRemainingDays))
+    : undefined;
+  return { title, expiresAt, remainingDays, permanent: status.donationPermanent === true };
+}
+
+function donationProfileText(info?: DonationInfo) {
+  if (!info?.title) return "Донат: <i>нет активной привилегии</i>";
+  let expiry = "";
+  if (info.permanent) expiry = " (навсегда)";
+  else if (info.remainingDays !== undefined) expiry = ` (осталось ${info.remainingDays} дн.)`;
+  else if (info.expiresAt) {
+    const date = new Date(info.expiresAt);
+    expiry = Number.isNaN(date.getTime()) ? "" : ` (до ${date.toLocaleDateString("ru-RU")})`;
+  }
+  return `Донат: <b>${escapeHtml(info.title)}</b>${expiry}`;
+}
 
 async function telegramApi(path: string, data: Record<string, string>) {
-  if (!telegramBridgeSecret) return { ok: false, code: "bridge_not_configured" } as Record<string, unknown>;
+  if (!telegramBridgeReady) return { ok: false, code: "bridge_not_configured" } as Record<string, unknown>;
   const response = await fetch(`${telegramBridge}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret },
@@ -108,13 +139,16 @@ async function refreshTelegramLink(telegramId: number) {
     if (status.linked === true && typeof status.nickname === "string") {
       linkedMinecraftAccounts.set(telegramId, status.nickname);
       telegramTwoFactorEnabled.set(telegramId, status.twoFactorEnabled !== false);
+      telegramDonationInfo.set(telegramId, donationInfoFromStatus(status));
     } else {
       linkedMinecraftAccounts.delete(telegramId);
       telegramTwoFactorEnabled.delete(telegramId);
+      telegramDonationInfo.delete(telegramId);
     }
   } catch {
     linkedMinecraftAccounts.delete(telegramId);
     telegramTwoFactorEnabled.delete(telegramId);
+    telegramDonationInfo.delete(telegramId);
   }
 }
 
@@ -137,7 +171,7 @@ async function showProfile(ctx: Context, answerCallback = false) {
     ? Markup.button.callback("🛡 Отключить 2FA", "profile:2fa-off")
     : Markup.button.callback("🛡 Включить 2FA", "profile:2fa-on");
   return ctx.reply(
-    `<b>👤 Профиль AURA</b>\n\nИгровой аккаунт: <b>${nickname}</b>\nДвухфакторная защита: ${twoFactorEnabled ? "<b>включена</b> ✅" : "<b>отключена</b> ❌"}`,
+    `<b>👤 Профиль AURA</b>\n\nИгровой аккаунт: <b>${escapeHtml(nickname)}</b>\n${donationProfileText(telegramDonationInfo.get(ctx.from.id))}\nДвухфакторная защита: ${twoFactorEnabled ? "<b>включена</b> ✅" : "<b>отключена</b> ❌"}`,
     { parse_mode: "HTML", ...Markup.inlineKeyboard([
       [Markup.button.callback("🚪 Кикнуть", "profile:kick"), Markup.button.callback("🔑 Восстановить пароль", "profile:reset")],
       [twoFactorButton],
@@ -155,7 +189,7 @@ async function showHome(ctx: Context) {
 
 async function showShop(ctx: Context) {
   await safeAnswer(ctx);
-  return ctx.reply("<b>🛒 Магазин AURA</b>\n<i>🔥 Скидка 40% на все позиции</i>\n\nВыбери товар. Для покупки напиши менеджеру – он подскажет дальнейшие шаги.", {
+  return ctx.reply("<b>🛒 Магазин AURA</b>\n<i>Привилегии, кейсы, услуги и Аура — с выдачей на игровой аккаунт.</i>\n\nВыбери нужный раздел. После оформления заказа менеджер пришлёт способ оплаты.", {
     parse_mode: "HTML",
     ...Markup.inlineKeyboard([
       [Markup.button.callback("👑 Привилегии", "category:privilege")],
@@ -171,16 +205,29 @@ function categoryTitle(category: ProductCategory) {
 }
 async function showCategory(ctx: Context, category: ProductCategory) {
   await safeAnswer(ctx);
-  const rows = productsBy(category).map((product) => [Markup.button.callback(`${product.emoji} ${product.title} · ${money(product.oldPrice)} → ${money(product.price)} 🔥`, `product:${product.id}`)]);
+  const rows = productsBy(category).map((product) => {
+    const price = product.periods?.[0] ? `от ${money(product.periods[0].price)}` : money(product.price);
+    return [Markup.button.callback(`${product.emoji} ${product.title} · ${price}`, `product:${product.id}`)];
+  });
   rows.push([Markup.button.callback("← К категориям", "shop")]);
-  return ctx.reply(`<b>${categoryTitle(category)}</b>\n<i>🔥 Все цены уже со скидкой 40%</i>\n\nНажми на товар, чтобы посмотреть состав и купить прямо в Telegram.`, { parse_mode: "HTML", ...Markup.inlineKeyboard(rows) });
+  return ctx.reply(`<b>${categoryTitle(category)}</b>\n<i>Актуальные цены с сайта AURA.</i>\n\nНажми на товар, чтобы посмотреть состав и оформить заказ прямо в Telegram.`, { parse_mode: "HTML", ...Markup.inlineKeyboard(rows) });
 }
 async function showProduct(ctx: Context, product: Product) {
   await safeAnswer(ctx);
   const perks = product.perks.map((perk) => `• ${perk}`).join("\n");
-  return ctx.replyWithPhoto(Input.fromLocalFile(asset(product.image)), { caption: `<b>${product.emoji} ${product.title}</b>\n${product.description}\n\n${perks}\n\n<s>${money(product.oldPrice)}</s> → <b>${money(product.price)}</b> <i>🔥 −40%</i>\n\n<b>🛒 Для покупки:</b> напиши менеджеру @manager_mcaura и укажи свой игровой ник и товар <b>${product.title}</b>.`,
+  const periodText = product.periods
+    ? `<b>Выбери срок:</b>\n${product.periods.map((period) => `• ${period.title} — <b>${money(period.price)}</b>`).join("\n")}`
+    : `<b>Цена:</b> ${money(product.price)}`;
+  const buyRows = product.periods
+    ? [
+        product.periods.slice(0, 2).map((period) => Markup.button.callback(`${period.title} · ${money(period.price)}`, `buy:${product.id}:${period.id}`)),
+        [Markup.button.callback(`Навсегда · ${money(product.periods[2].price)}`, `buy:${product.id}:forever`)]
+      ]
+    : [[Markup.button.callback(`🛒 Оформить заказ · ${money(product.price)}`, `buy:${product.id}`)]];
+  return ctx.replyWithPhoto(Input.fromLocalFile(asset(product.image)), { caption: `<b>${product.emoji} ${product.title}</b>\n${product.description}\n\n${perks}\n\n${periodText}\n\nПосле оформления менеджер пришлёт способ оплаты и выдаст товар на игровой аккаунт.`,
     parse_mode: "HTML",
     ...Markup.inlineKeyboard([
+      ...buyRows,
       [Markup.button.callback("← К списку", `category:${product.category}`)]
     ])
   });
@@ -228,6 +275,7 @@ bot.action("profile:unlink", async (ctx) => {
   if (result.ok !== true) return safeAnswer(ctx, "Аккаунт ещё не привязан");
   linkedMinecraftAccounts.delete(ctx.from.id);
   telegramTwoFactorEnabled.delete(ctx.from.id);
+  telegramDonationInfo.delete(ctx.from.id);
   await safeAnswer(ctx, "Аккаунт отвязан");
   await ctx.reply("✅ Игровой аккаунт отвязан от Telegram.", mainKeyboard(ctx.from.id));
 });
@@ -284,13 +332,15 @@ bot.action("rules", async (ctx) => {
 });
 bot.action("applications", async (ctx) => {
   await safeAnswer(ctx);
-  await ctx.reply("<b>📋 Заявки в команду AURA</b>\n\nЗаявки не заполняются в боте. Перейди на Discord-сервер AURA и выбери нужную форму:\n\n• Медиа-команда – YouTube или TikTok\n• Другие открытые роли\n\nТам же можно следить за статусом заявки.", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("Открыть Discord AURA", links.discord)], [Markup.button.callback("← В меню", "home")]]) });
+  pending.set(ctx.from.id, { type: "ticket", kind: "application" });
+  await ctx.reply("<b>📋 Заявка в команду AURA</b>\n\nНапиши одним сообщением:\n• желаемую роль;\n• игровой ник;\n• возраст;\n• опыт и ссылки на работы, если они есть.\n\n<i>Чтобы отменить — /cancel</i>", { parse_mode: "HTML", ...Markup.inlineKeyboard([[Markup.button.url("Discord AURA", links.discord)], [Markup.button.callback("← В меню", "home")]]) });
 });
 bot.action(/^category:(privilege|case|service)$/, (ctx) => showCategory(ctx, ctx.match[1] as ProductCategory));
 bot.action(/^product:(.+)$/, async (ctx) => { const product = productById(ctx.match[1]); if (product) await showProduct(ctx, product); else await safeAnswer(ctx, "Товар не найден"); });
 bot.action("aura:custom", async (ctx) => {
   await safeAnswer(ctx);
-  await ctx.reply("<b>🔴 Пополнение Ауры</b>\n<i>🔥 Акция: 1 ₽ = 1,5 Ауры</i>\n\nДля покупки напиши менеджеру @manager_mcaura:\n\n• свой игровой ник\n• сколько Ауры хочешь купить\n\n<i>Менеджер поможет оформить покупку.</i>", { parse_mode: "HTML", ...backKeyboard() });
+  pending.set(ctx.from.id, { type: "aura-amount" });
+  await ctx.reply("<b>🔴 Пополнение Ауры</b>\n\nКурс: <b>1 ₽ = 1,5 Ауры</b>.\nМинимум — 5 ₽, максимум — 5 000 ₽.\n\nОтправь сумму пополнения в рублях.\n\n<i>Чтобы отменить — /cancel</i>", { parse_mode: "HTML", ...backKeyboard() });
 });
 bot.action(/^ticket:(idea|bug|report)$/, async (ctx) => {
   const kind = ctx.match[1] as TicketKind;
@@ -299,15 +349,22 @@ bot.action(/^ticket:(idea|bug|report)$/, async (ctx) => {
   const prompts: Record<TicketKind, string> = {
     idea: "💡 <b>Предложение по улучшению</b>\n\nОпиши идею: какую проблему она решает, как должна работать и почему это будет полезно игрокам.",
     bug: "🐞 <b>Сообщение о баге</b>\n\nНапиши, где найден баг, как его повторить и что произошло. Если есть видео или скрин, приложи ссылку прямо в описание.",
-    report: "🚨 <b>Жалоба на игрока</b>\n\nУкажи ник игрока, нарушение, время и серверный режим. Добавь ссылку на видео или скриншоты, если они есть."
+    report: "🚨 <b>Жалоба на игрока</b>\n\nУкажи ник игрока, нарушение, время и серверный режим. Добавь ссылку на видео или скриншоты, если они есть.",
+    application: "📋 <b>Заявка в команду AURA</b>\n\nНапиши желаемую роль, игровой ник, возраст, опыт и ссылки на работы, если они есть."
   };
   await ctx.reply(prompts[kind] + "\n\n<i>Чтобы отменить – /cancel</i>", { parse_mode: "HTML", ...backKeyboard() });
 });
-bot.action(/^buy:(.+)$/, async (ctx) => {
+bot.action(/^buy:([^:]+)(?::(30|90|forever))?$/, async (ctx) => {
   const product = productById(ctx.match[1]);
   if (!product) return safeAnswer(ctx, "Товар не найден");
+  const periodId = ctx.match[2] as "30" | "90" | "forever" | undefined;
+  const period = periodId ? product.periods?.find((item) => item.id === periodId) : undefined;
+  if (product.periods && !period) return safeAnswer(ctx, "Выбери срок привилегии ещё раз");
   await safeAnswer(ctx);
-  await showManualPurchase(ctx, product.title);
+  pending.set(ctx.from.id, { type: "order", productId: product.id, periodId });
+  const title = period ? `${product.title} · ${period.title}` : product.title;
+  const amount = period?.price ?? product.price;
+  await ctx.reply(`<b>🛒 Оформление заказа: ${title}</b>\nСтоимость: <b>${money(amount)}</b>\n\nОтправь игровой ник, на который нужно выдать товар. После этого заказ уйдёт менеджеру для оплаты и выдачи.`, { parse_mode: "HTML", ...backKeyboard() });
 });
 bot.command("cancel", async (ctx) => { pending.delete(ctx.from.id); await ctx.reply("Действие отменено.", mainKeyboard()); });
 
@@ -318,7 +375,7 @@ bot.on("text", async (ctx) => {
   if (linkState) {
     const nickname = ctx.message.text.trim();
     if (!/^[A-Za-z0-9_]{3,16}$/.test(nickname)) return ctx.reply("Ник Minecraft должен состоять из 3–16 латинских букв, цифр или символа _. Попробуй ещё раз.");
-    if (!telegramBridgeSecret) return ctx.reply("Привязка временно настраивается. Попробуй чуть позже.");
+    if (!telegramBridgeReady) return ctx.reply("Привязка к текущему серверу ещё настраивается. Попробуй чуть позже.");
     try {
       const response = await fetch(`${telegramBridge}/telegram/link/request`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(ctx.from.id), nickname }) });
       const result = await response.json() as { ok?: boolean; code?: string };
@@ -331,13 +388,56 @@ bot.on("text", async (ctx) => {
     }
   }
   if (!state) return;
+  if (state.type === "aura-amount") {
+    const amountRub = Number(ctx.message.text.trim().replace(",", "."));
+    if (!Number.isInteger(amountRub) || amountRub < 5 || amountRub > 5000) {
+      return ctx.reply("Введи целую сумму от 5 до 5 000 ₽.");
+    }
+    const auraAmount = Math.round(amountRub * 1.5);
+    pending.set(ctx.from.id, { type: "aura-nick", amountRub });
+    return ctx.reply(`<b>Будет начислено: ${auraAmount} Ауры.</b>\n\nТеперь отправь игровой ник для выдачи.`, { parse_mode: "HTML", ...backKeyboard() });
+  }
+  if (state.type === "aura-nick") {
+    const minecraftNick = ctx.message.text.trim();
+    if (!/^[A-Za-z0-9_]{3,16}$/.test(minecraftNick)) return ctx.reply("Ник Minecraft должен состоять из 3–16 латинских букв, цифр или символа _. Попробуй ещё раз.");
+    const auraAmount = Math.round(state.amountRub * 1.5);
+    const order = {
+      id: randomUUID().slice(0, 8).toUpperCase(),
+      productId: "aura-topup",
+      productTitle: `Пополнение Ауры · ${auraAmount} Ауры`,
+      amountRub: state.amountRub,
+      auraAmount,
+      minecraftNick,
+      createdAt: new Date().toISOString(),
+      user: userData(ctx)
+    };
+    await saveOrder(order);
+    pending.delete(ctx.from.id);
+    await sendStaff(`<b>🔴 ЗАКАЗ #${order.id}</b>\nТовар: <b>${order.productTitle}</b> · <b>${money(order.amountRub)}</b>\nНик: <code>${minecraftNick}</code>\nПокупатель: ${order.user.name}${order.user.username ? ` (@${order.user.username})` : ""} · <code>${order.user.id}</code>`);
+    return ctx.reply(`<b>✅ Заказ #${order.id} создан.</b>\n\nМенеджер пришлёт способ оплаты. После оплаты <b>${auraAmount} Ауры</b> будут начислены на ник <b>${minecraftNick}</b>.`, { parse_mode: "HTML", ...mainKeyboard(ctx.from.id) });
+  }
+  if (state.type === "order") {
+    const product = productById(state.productId);
+    const minecraftNick = ctx.message.text.trim();
+    if (!product) { pending.delete(ctx.from.id); return ctx.reply("Товар больше недоступен. Открой магазин заново.", mainKeyboard(ctx.from.id)); }
+    if (!/^[A-Za-z0-9_]{3,16}$/.test(minecraftNick)) return ctx.reply("Ник Minecraft должен состоять из 3–16 латинских букв, цифр или символа _. Попробуй ещё раз.");
+    const period = state.periodId ? product.periods?.find((item) => item.id === state.periodId) : undefined;
+    if (product.periods && !period) { pending.delete(ctx.from.id); return ctx.reply("Срок привилегии не найден. Открой товар заново.", mainKeyboard(ctx.from.id)); }
+    const productTitle = period ? `${product.title} · ${period.title}` : product.title;
+    const amountRub = period?.price ?? product.price;
+    const order = { id: randomUUID().slice(0, 8).toUpperCase(), productId: product.id, productTitle, amountRub, minecraftNick, createdAt: new Date().toISOString(), user: userData(ctx) };
+    await saveOrder(order);
+    pending.delete(ctx.from.id);
+    await sendStaff(`<b>🛒 ЗАКАЗ #${order.id}</b>\nТовар: <b>${order.productTitle}</b> · <b>${money(order.amountRub)}</b>\nНик: <code>${minecraftNick}</code>\nПокупатель: ${order.user.name}${order.user.username ? ` (@${order.user.username})` : ""} · <code>${order.user.id}</code>`);
+    return ctx.reply(`<b>✅ Заказ #${order.id} создан.</b>\n\nМенеджер проверит его и пришлёт способ оплаты. Товар будет выдан на ник <b>${minecraftNick}</b>.`, { parse_mode: "HTML", ...mainKeyboard(ctx.from.id) });
+  }
   if (state.type === "ticket") {
     const text = ctx.message.text.trim();
     if (text.length < 15) return ctx.reply("Опиши обращение подробнее – хотя бы 15 символов.");
     const ticket = { id: randomUUID().slice(0, 8).toUpperCase(), kind: state.kind, text, createdAt: new Date().toISOString(), user: userData(ctx) };
     await saveTicket(ticket);
     pending.delete(ctx.from.id);
-    const labels: Record<TicketKind, string> = { idea: "💡 ИДЕЯ", bug: "🐞 БАГ", report: "🚨 ЖАЛОБА" };
+    const labels: Record<TicketKind, string> = { idea: "💡 ИДЕЯ", bug: "🐞 БАГ", report: "🚨 ЖАЛОБА", application: "📋 ЗАЯВКА В КОМАНДУ" };
     await sendStaff(`<b>${labels[state.kind]} #${ticket.id}</b>\nОт: ${ticket.user.name}${ticket.user.username ? ` (@${ticket.user.username})` : ""} · <code>${ticket.user.id}</code>\n\n${text}`);
     return ctx.reply("<b>Готово – обращение отправлено команде AURA.</b>\nЕсли идею реализуют или баг подтвердится, с тобой свяжутся насчёт награды.", { parse_mode: "HTML", ...mainKeyboard() });
   }

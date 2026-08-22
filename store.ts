@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-export type TicketKind = "idea" | "bug" | "report";
+export type TicketKind = "idea" | "bug" | "report" | "application";
 export type Ticket = {
   id: string;
   kind: TicketKind;
