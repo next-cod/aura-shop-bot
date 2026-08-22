@@ -252,6 +252,15 @@ async function showManualPurchase(ctx: Context, title: string) {
   await ctx.reply(`<b>🛒 Покупка: ${title}</b>\n\nНапиши менеджеру @manager_mcaura и укажи:\n\n• свой игровой ник\n• товар, который хочешь купить\n\n<i>Менеджер ответит и поможет оформить покупку.</i>`, { parse_mode: "HTML", ...backKeyboard() });
 }
 
+// Confirm callback buttons before any potentially slow menu or API work.
+// Telegram otherwise may show a misleading "action is no longer available" toast.
+bot.use(async (ctx, next) => {
+  if (ctx.callbackQuery) {
+    await ctx.answerCbQuery().catch(() => undefined);
+  }
+  return next();
+});
+
 bot.start((ctx) => showHome(ctx));
 bot.command("menu", (ctx) => showHome(ctx));
 bot.command("manager", async (ctx) => {
