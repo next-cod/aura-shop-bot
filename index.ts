@@ -5,16 +5,7 @@ import { createServer } from "node:http";
 import { join } from "node:path";
 import { Telegraf, Markup, Input, type Context } from "telegraf";
 import { productById, productsBy, type Product, type ProductCategory } from "./catalog.js";
-import {
-  getManagerChatId,
-  getPendingTelegramLinks,
-  removePendingTelegramLink,
-  saveOrder,
-  savePendingTelegramLink,
-  saveTicket,
-  setManagerChatId,
-  type TicketKind
-} from "./store.js";
+import { getManagerChatId, saveOrder, savePendingTelegramLink, saveTicket, setManagerChatId, type TicketKind } from "./store.js";
 
 // Some cloud networks publish an unreachable IPv6 route for Telegram. Prefer
 // IPv4 so polling starts reliably after every deployment.
@@ -78,14 +69,11 @@ const dateTime = (timestamp: number) => new Intl.DateTimeFormat("ru-RU", {
   second: "2-digit"
 }).format(new Date(timestamp)) + " МСК";
 
-const mainKeyboard = (telegramId?: number) => Markup.inlineKeyboard([
+const mainKeyboard = (_telegramId?: number) => Markup.inlineKeyboard([
   [Markup.button.callback("🛒 Магазин AURA", "shop"), Markup.button.callback("🧭 Обращения", "help")],
   [Markup.button.callback("🎮 О сервере", "server"), Markup.button.callback("📜 Правила", "rules")],
   [Markup.button.callback("📋 Заявки в команду", "applications"), Markup.button.url("💬 Discord", links.discord)],
-  [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Канал создателя", "https://t.me/next_auramc")],
-  [linkedMinecraftAccounts.has(telegramId || 0)
-    ? Markup.button.callback("👤 Профиль", "profile")
-    : Markup.button.callback("🔗 Привязать аккаунт", "profile:link")]
+  [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Канал создателя", "https://t.me/next_auramc")]
 ]);
 const backKeyboard = () => Markup.inlineKeyboard([[Markup.button.callback("← В главное меню", "home")]]);
 const safeAnswer = (ctx: Context, text?: string) => ctx.answerCbQuery(text).catch(() => undefined);
@@ -182,9 +170,8 @@ async function showProfile(ctx: Context, answerCallback = false) {
 }
 
 async function showHome(ctx: Context) {
-  if (ctx.from?.id) await refreshTelegramLink(ctx.from.id);
-  const text = "<b>🔴 AURA – ГРИФЕРСКИЙ СЕРВЕР</b>\n<i>🔥 Играй, сражайся, забирай своё.</i>\n\n🎮 <b>Для телефонов и компьютеров</b>\nВерсии: <b>1.16.5–26.2</b>\nРежим: <b>гриф-выживание</b>\n\n📢 Канал сервера: @aura_grief\n💬 Discord сервер: <a href=\"https://discord.gg/JP6jSt7DA\">discord.gg/JP6jSt7DA</a>\n👤 Канал создателя: @next_auramc\n\n<i>Выбирай раздел ниже – всё нужное в одном боте.</i>";
-  return ctx.replyWithPhoto(Input.fromLocalFile(asset("aura-home.png")), { caption: text, parse_mode: "HTML", ...withoutLinkPreview, ...mainKeyboard(ctx.from?.id) });
+  const text = "<b>🛒 AURA — МАГАЗИН И ПОДДЕРЖКА</b>\n<i>🔥 Привилегии, Аура, кейсы и помощь игрокам.</i>\n\n🎮 <b>Для телефонов и компьютеров</b>\nВерсии: <b>1.21.4–26.2</b>\nРежим: <b>гриф-выживание</b>\n\n📢 Канал сервера: @aura_grief\n💬 Discord сервер: <a href=\"https://discord.gg/JP6jSt7DA\">discord.gg/JP6jSt7DA</a>\n👤 Канал создателя: @next_auramc\n\n<i>Выбирай раздел ниже. Привязка аккаунта работает в отдельном боте безопасности.</i>";
+  return ctx.replyWithPhoto(Input.fromLocalFile(asset("aura-home.png")), { caption: text, parse_mode: "HTML", ...withoutLinkPreview, ...mainKeyboard() });
 }
 
 async function showShop(ctx: Context) {
@@ -252,6 +239,12 @@ async function showManualPurchase(ctx: Context, title: string) {
   await ctx.reply(`<b>🛒 Покупка: ${title}</b>\n\nНапиши менеджеру @manager_mcaura и укажи:\n\n• свой игровой ник\n• товар, который хочешь купить\n\n<i>Менеджер ответит и поможет оформить покупку.</i>`, { parse_mode: "HTML", ...backKeyboard() });
 }
 
+// Acknowledge every click before slow actions so Telegram never shows a stale-action toast.
+bot.use(async (ctx, next) => {
+  if (ctx.callbackQuery) await ctx.answerCbQuery().catch(() => undefined);
+  return next();
+});
+
 bot.start((ctx) => showHome(ctx));
 bot.command("menu", (ctx) => showHome(ctx));
 bot.command("manager", async (ctx) => {
@@ -262,66 +255,6 @@ bot.command("manager", async (ctx) => {
 bot.action("home", async (ctx) => { pending.delete(ctx.from.id); await safeAnswer(ctx); await showHome(ctx); });
 bot.action("shop", showShop);
 bot.action("help", showHelp);
-bot.action("profile", async (ctx) => {
-  await showProfile(ctx, true);
-});
-bot.action("profile:link", async (ctx) => {
-  await safeAnswer(ctx);
-  telegramLinkPending.set(ctx.from.id, { type: "telegram-link" });
-  await ctx.reply("<b>🔗 Привязка аккаунта AURA</b>\n\nОтправь свой игровой ник Minecraft.\n\n<i>Перед этим зайди на сервер AURA, напиши <code>/link</code> и выбери Telegram.</i>", { parse_mode: "HTML" });
-});
-bot.action("profile:unlink", async (ctx) => {
-  const result = await telegramApi("/telegram/action", { telegramId: String(ctx.from.id), action: "unlink" });
-  if (result.ok !== true) return safeAnswer(ctx, "Аккаунт ещё не привязан");
-  linkedMinecraftAccounts.delete(ctx.from.id);
-  telegramTwoFactorEnabled.delete(ctx.from.id);
-  telegramDonationInfo.delete(ctx.from.id);
-  await safeAnswer(ctx, "Аккаунт отвязан");
-  await ctx.reply("✅ Игровой аккаунт отвязан от Telegram.", mainKeyboard(ctx.from.id));
-});
-bot.action(/^(profile:kick|profile:reset|profile:2fa-off|profile:2fa-on)$/, async (ctx) => {
-  const actions: Record<string, string> = {
-    "profile:kick": "kick",
-    "profile:reset": "reset_password",
-    "profile:2fa-off": "two_factor_off",
-    "profile:2fa-on": "two_factor_on"
-  };
-  const result = await telegramApi("/telegram/action", { telegramId: String(ctx.from.id), action: actions[ctx.match[1]] });
-  if (result.ok !== true) return safeAnswer(ctx, "Сначала привяжи аккаунт");
-  await safeAnswer(ctx, "Готово");
-  const profileBack = Markup.inlineKeyboard([[Markup.button.callback("← Вернуться в профиль", "profile")]]);
-  if (ctx.match[1] === "profile:reset") {
-    return ctx.reply(`🔑 <b>Пароль восстановлен.</b>\n\nНовый пароль: <code>${String(result.password || "")}</code>\n\nСохрани его. Старый пароль больше не работает.`, { parse_mode: "HTML", ...profileBack });
-  }
-  if (ctx.match[1] === "profile:2fa-off") {
-    telegramTwoFactorEnabled.set(ctx.from.id, false);
-    return ctx.reply("🛡 Двухфакторная авторизация отключена. Подтверждение входа через Telegram больше запрашиваться не будет.", profileBack);
-  }
-  if (ctx.match[1] === "profile:2fa-on") {
-    telegramTwoFactorEnabled.set(ctx.from.id, true);
-    return ctx.reply("🛡 Двухфакторная авторизация включена. После длительного отсутствия вход потребуется подтвердить через Telegram.", profileBack);
-  }
-  await ctx.reply("🚪 Команда выполнена: игровой аккаунт отключён от сервера.", profileBack);
-});
-bot.action(/^login:(approve|allow|deny)(?::([0-9a-f-]{36}))?$/, async (ctx) => {
-  const allow = ctx.match[1] !== "deny";
-  const requestId = ctx.match[2];
-  const answer: Record<string, string> = {
-    telegramId: String(ctx.from.id),
-    allow: String(allow)
-  };
-  if (requestId) answer.requestId = requestId;
-  const result = await telegramApi("/telegram/login/answer", answer);
-  shownTelegramLoginRequests.delete(ctx.from.id);
-  if (result.ok !== true) return safeAnswer(ctx, "Запрос уже истёк");
-  await safeAnswer(ctx, allow ? "Вход подтверждён" : "Вход отклонён");
-  await ctx.editMessageText(
-    allow
-      ? `<b>✅ Вход в аккаунт Aura подтверждён</b>\n\nВремя: <code>${dateTime(Date.now())}</code>\nИгрок допущен на сервер.`
-      : `<b>❌ Вход в аккаунт Aura отклонён</b>\n\nВремя: <code>${dateTime(Date.now())}</code>\nПодключение к серверу отменено.`,
-    { parse_mode: "HTML" }
-  ).catch(() => undefined);
-});
 bot.action("server", async (ctx) => {
   await safeAnswer(ctx);
   await ctx.reply("<b>🎮 Об AURA</b>\n\n🔴 AURA – гриф-выживание для компьютеров и телефонов.\n🧩 Поддерживаемые версии: <b>1.16.5–26.2</b>.\n\n📢 Новости сервера: @aura_grief\n👤 Создатель: @next_auramc\n💬 Discord сервер: https://discord.gg/JP6jSt7DA", { parse_mode: "HTML", ...withoutLinkPreview, ...Markup.inlineKeyboard([[Markup.button.url("💬 Открыть Discord", links.discord)], [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Создатель", "https://t.me/next_auramc")], [Markup.button.callback("← В меню", "home")]]) });
@@ -371,22 +304,6 @@ bot.command("cancel", async (ctx) => { pending.delete(ctx.from.id); await ctx.re
 bot.on("text", async (ctx) => {
   const state = pending.get(ctx.from.id);
   if (ctx.message.text.startsWith("/")) return;
-  const linkState = telegramLinkPending.get(ctx.from.id);
-  if (linkState) {
-    const nickname = ctx.message.text.trim();
-    if (!/^[A-Za-z0-9_]{3,16}$/.test(nickname)) return ctx.reply("Ник Minecraft должен состоять из 3–16 латинских букв, цифр или символа _. Попробуй ещё раз.");
-    if (!telegramBridgeReady) return ctx.reply("Привязка к текущему серверу ещё настраивается. Попробуй чуть позже.");
-    try {
-      const response = await fetch(`${telegramBridge}/telegram/link/request`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(ctx.from.id), nickname }) });
-      const result = await response.json() as { ok?: boolean; code?: string };
-      if (!result.ok) return ctx.reply(result.code === "open_link_in_game" ? "Сначала зайди в Minecraft, напиши <code>/link</code>, выбери Telegram и повтори попытку." : "Не удалось начать привязку. Проверь ник и попробуй ещё раз.", { parse_mode: "HTML" });
-      telegramLinkPending.set(ctx.from.id, { type: "telegram-link", nickname });
-      await savePendingTelegramLink(ctx.from.id, nickname);
-      return ctx.reply(`<b>Запрос отправлен.</b>\n\nВ Minecraft на аккаунте <b>${nickname}</b> появится кнопка подтверждения. Нажми её — после этого бот сообщит об успешной привязке.`, { parse_mode: "HTML" });
-    } catch {
-      return ctx.reply("Сервер привязки пока недоступен. Попробуй чуть позже.");
-    }
-  }
   if (!state) return;
   if (state.type === "aura-amount") {
     const amountRub = Number(ctx.message.text.trim().replace(",", "."));
@@ -442,126 +359,6 @@ bot.on("text", async (ctx) => {
     return ctx.reply("<b>Готово – обращение отправлено команде AURA.</b>\nЕсли идею реализуют или баг подтвердится, с тобой свяжутся насчёт награды.", { parse_mode: "HTML", ...mainKeyboard() });
   }
 });
-
-let pollingTelegramLinks = false;
-async function restorePendingTelegramLinks() {
-  for (const request of await getPendingTelegramLinks()) {
-    telegramLinkPending.set(request.telegramId, { type: "telegram-link", nickname: request.nickname });
-  }
-}
-
-async function isTelegramAccountLinked(telegramId: number, nickname: string) {
-  const account = await telegramApi("/telegram/account/status", { telegramId: String(telegramId) });
-  return account.linked === true
-    && typeof account.nickname === "string"
-    && account.nickname.toLowerCase() === nickname.toLowerCase();
-}
-
-async function notifyTelegramLinkSuccess(telegramId: number, nickname: string) {
-  linkedMinecraftAccounts.set(telegramId, nickname);
-  telegramTwoFactorEnabled.set(telegramId, true);
-  await bot.telegram.sendMessage(
-    telegramId,
-    `✅ <b>Привязка завершена!</b>\n\nMinecraft-аккаунт <b>${nickname}</b> успешно привязан к Telegram. Теперь управление аккаунтом доступно в разделе «Профиль».`,
-    {
-      parse_mode: "HTML",
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback("👤 Открыть профиль", "profile")],
-        [Markup.button.callback("← В главное меню", "home")]
-      ])
-    }
-  );
-  telegramLinkPending.delete(telegramId);
-  await removePendingTelegramLink(telegramId);
-}
-
-async function pollTelegramLinkConfirmations() {
-  if (!telegramBridgeSecret || pollingTelegramLinks) return;
-  pollingTelegramLinks = true;
-  try {
-    for (const [telegramId, request] of telegramLinkPending) {
-      if (!request.nickname) continue;
-      try {
-        if (await isTelegramAccountLinked(telegramId, request.nickname)) {
-          await notifyTelegramLinkSuccess(telegramId, request.nickname);
-          continue;
-        }
-        const statusResponse = await fetch(`${telegramBridge}/telegram/link/status`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(telegramId), nickname: request.nickname }) });
-        const status = await statusResponse.json() as { confirmed?: boolean };
-        if (!status.confirmed) continue;
-        const finishResponse = await fetch(`${telegramBridge}/telegram/link/finish`, { method: "POST", headers: { "Content-Type": "application/json", "X-Aura-Secret": telegramBridgeSecret }, body: JSON.stringify({ telegramId: String(telegramId), nickname: request.nickname }) });
-        const finish = await finishResponse.json() as { ok?: boolean };
-        if (!finish.ok && !(await isTelegramAccountLinked(telegramId, request.nickname))) continue;
-        await notifyTelegramLinkSuccess(telegramId, request.nickname);
-      } catch (error) { console.error("Telegram link status check failed", error); }
-    }
-  } finally {
-    pollingTelegramLinks = false;
-  }
-}
-await restorePendingTelegramLinks();
-setInterval(() => void pollTelegramLinkConfirmations(), 2_500);
-
-let pollingTelegramLogins = false;
-async function pollTelegramLoginRequests() {
-  if (!telegramBridgeSecret || pollingTelegramLogins) return;
-  pollingTelegramLogins = true;
-  try {
-    const result = await telegramApi("/telegram/login/pending", {});
-    const requests = (Array.isArray(result.requests) ? result.requests : []) as TelegramLoginRequest[];
-    const activeIds = new Set<number>();
-    for (const item of requests) {
-      if (!item || typeof item !== "object") continue;
-      const telegramId = Number(item.telegramId);
-      const requestId = String(item.requestId || `legacy-${telegramId}`);
-      const nickname = String(item.nickname || "");
-      const ip = String(item.ip || "неизвестен");
-      const requestedAt = Number(item.requestedAt) || Date.now();
-      if (!Number.isSafeInteger(telegramId) || telegramId <= 0 || !nickname) continue;
-      activeIds.add(telegramId);
-      if (shownTelegramLoginRequests.get(telegramId) === requestId) continue;
-      const allowAction = requestId.startsWith("legacy-") ? "login:allow" : `login:allow:${requestId}`;
-      const denyAction = requestId.startsWith("legacy-") ? "login:deny" : `login:deny:${requestId}`;
-      await bot.telegram.sendMessage(telegramId,
-        `<b>🔐 Вход в аккаунт Aura</b>\n\n` +
-        `Игрок: <code>${html(nickname)}</code>\n` +
-        `IP-адрес: <code>${html(ip)}</code>\n` +
-        `Время: <code>${dateTime(requestedAt)}</code>\n\n` +
-        `Подтвердите вход, только если это вы. Если запрос вам незнаком, отклоните его.`, {
-          parse_mode: "HTML",
-          ...Markup.inlineKeyboard([[
-            Markup.button.callback("✅ Подтвердить", allowAction),
-            Markup.button.callback("❌ Отклонить", denyAction)
-          ]])
-        });
-      shownTelegramLoginRequests.set(telegramId, requestId);
-    }
-    for (const telegramId of shownTelegramLoginRequests.keys()) {
-      if (!activeIds.has(telegramId)) shownTelegramLoginRequests.delete(telegramId);
-    }
-
-    const eventResult = await telegramApi("/telegram/events/pending", {});
-    const events = (Array.isArray(eventResult.events) ? eventResult.events : []) as TelegramAccountEvent[];
-    for (const event of events) {
-      if (event.type === "logout") {
-        await bot.telegram.sendMessage(
-          event.telegramId,
-          `<b>🚪 Вы вышли с сервера Aura</b>\n\n` +
-          `Аккаунт: <code>${html(event.nickname)}</code>\n` +
-          `Время выхода: <code>${dateTime(event.createdAt)}</code>\n\n` +
-          `Игровая сессия завершена.`,
-          { parse_mode: "HTML" }
-        );
-      }
-      await telegramApi("/telegram/events/ack", { eventId: event.id });
-    }
-  } catch (error) {
-    console.error("Telegram account event check failed", error);
-  } finally {
-    pollingTelegramLogins = false;
-  }
-}
-setInterval(() => void pollTelegramLoginRequests(), 2_500);
 
 bot.catch((error) => console.error("Bot error", error));
 async function launchWithRetry() {
