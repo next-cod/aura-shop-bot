@@ -22,6 +22,7 @@ const links = {
 };
 const staffChatId = Number(process.env.STAFF_CHAT_ID || 0) || undefined;
 const managerUsername = (process.env.MANAGER_USERNAME || "manager_mcaura").toLowerCase();
+const accountLinkUrl = "https://t.me/mcaura_bot";
 const asset = (name: string) => join(process.cwd(), "assets", name);
 type Pending =
   | { type: "ticket"; kind: TicketKind }
@@ -72,7 +73,7 @@ const dateTime = (timestamp: number) => new Intl.DateTimeFormat("ru-RU", {
 const mainKeyboard = (_telegramId?: number) => Markup.inlineKeyboard([
   [Markup.button.callback("🛒 Магазин AURA", "shop"), Markup.button.callback("🧭 Обращения", "help")],
   [Markup.button.callback("🎮 О сервере", "server"), Markup.button.callback("📜 Правила", "rules")],
-  [Markup.button.callback("📋 Заявки в команду", "applications"), Markup.button.url("💬 Discord", links.discord)],
+  [Markup.button.callback("📋 Заявки в команду", "applications"), Markup.button.url("💬 Помощь", "https://t.me/manager_mcaura")],
   [Markup.button.url("📢 Канал сервера", links.telegram), Markup.button.url("👤 Канал создателя", "https://t.me/next_auramc")]
 ]);
 const backKeyboard = () => Markup.inlineKeyboard([[Markup.button.callback("← В главное меню", "home")]]);
@@ -170,7 +171,7 @@ async function showProfile(ctx: Context, answerCallback = false) {
 }
 
 async function showHome(ctx: Context) {
-  const text = "<b>🛒 AURA — МАГАЗИН И ПОДДЕРЖКА</b>\n<i>🔥 Привилегии, Аура, кейсы и помощь игрокам.</i>\n\n🎮 <b>Для телефонов и компьютеров</b>\nВерсии: <b>1.21.4–26.2</b>\nРежим: <b>гриф-выживание</b>\n\n📢 Канал сервера: @aura_grief\n💬 Discord сервер: <a href=\"https://discord.gg/JP6jSt7DA\">discord.gg/JP6jSt7DA</a>\n👤 Канал создателя: @next_auramc\n\n<i>Выбирай раздел ниже. Привязка аккаунта работает в отдельном боте безопасности.</i>";
+  const text = "<b>🛒 AURA — МАГАЗИН И ПОДДЕРЖКА</b>\n<i>Официальный магазин Minecraft-сервера AURA.</i>\n\nЗдесь можно оформить привилегии, Ауру, кейсы и услуги. После заказа менеджер @manager_mcaura пришлёт способ оплаты.\n\n🎮 <b>Для телефонов и компьютеров</b>\nВерсии: <b>1.21.4–26.2</b>\nРежим: <b>гриф-выживание</b>\n\n🔐 Для привязки и защиты аккаунта используй отдельный бот: @mcaura_bot\n📢 Канал сервера: @aura_grief\n💬 Discord: <a href=\"https://discord.gg/JP6jSt7DA\">discord.gg/JP6jSt7DA</a>";
   return ctx.replyWithPhoto(Input.fromLocalFile(asset("aura-home.png")), { caption: text, parse_mode: "HTML", ...withoutLinkPreview, ...mainKeyboard() });
 }
 
@@ -364,6 +365,8 @@ bot.catch((error) => console.error("Bot error", error));
 async function launchWithRetry() {
   for (;;) {
     try {
+      await bot.telegram.callApi("setMyDescription" as never, { description: "Официальный магазин AURA: привилегии, кейсы, Аура, услуги и обращения в поддержку. Для защиты аккаунта — @mcaura_bot." } as never).catch(() => undefined);
+      await bot.telegram.callApi("setMyShortDescription" as never, { short_description: "Магазин и поддержка Minecraft-сервера AURA" } as never).catch(() => undefined);
       await bot.launch();
       console.log("AURA bot is running");
       return;
